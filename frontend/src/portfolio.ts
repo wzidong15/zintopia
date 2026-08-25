@@ -82,3 +82,76 @@ export const STRATEGY_OPTIONS: { id: PortfolioStrategyKind; label: string; hint:
   { id: "momentum", label: "Momentum", hint: "Rotate into the top 3 US gainers (equal weight)." },
   { id: "rsi_reversion", label: "RSI mean reversion", hint: "Buy ~25% cash when RSI < 30; sell when RSI > 70." },
 ];
+
+const SORT_KEY = "zintopia.portfolios.sort";
+
+export type PortfolioSortBy = "added" | "name" | "perf";
+export type PortfolioSortDir = "asc" | "desc";
+export type PortfolioSort = { by: PortfolioSortBy; dir: PortfolioSortDir };
+
+const DEFAULT_PORTFOLIO_SORT: PortfolioSort = { by: "name", dir: "asc" };
+
+export const PORTFOLIO_SORT_OPTIONS: {
+  id: string;
+  by: PortfolioSortBy;
+  dir: PortfolioSortDir;
+  label: string;
+}[] = [
+  { id: "name-asc", by: "name", dir: "asc", label: "Name A to Z" },
+  { id: "name-desc", by: "name", dir: "desc", label: "Name Z to A" },
+  { id: "perf-desc", by: "perf", dir: "desc", label: "Return high to low" },
+  { id: "perf-asc", by: "perf", dir: "asc", label: "Return low to high" },
+  { id: "added", by: "added", dir: "asc", label: "Added order" },
+];
+
+export function portfolioSortId(sort: PortfolioSort): string {
+  if (sort.by === "added") return "added";
+  return `${sort.by}-${sort.dir}`;
+}
+
+export function portfolioSortFromId(id: string): PortfolioSort {
+  const opt = PORTFOLIO_SORT_OPTIONS.find((o) => o.id === id);
+  return opt ? { by: opt.by, dir: opt.dir } : { ...DEFAULT_PORTFOLIO_SORT };
+}
+
+export function loadPortfolioSort(): PortfolioSort {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (!raw) return { ...DEFAULT_PORTFOLIO_SORT };
+    const parsed = JSON.parse(raw) as Partial<PortfolioSort>;
+    const by: PortfolioSortBy =
+      parsed.by === "name" || parsed.by === "perf" || parsed.by === "added" ? parsed.by : "name";
+    const dir: PortfolioSortDir = parsed.dir === "desc" ? "desc" : "asc";
+    return { by, dir: by === "added" ? "asc" : dir };
+  } catch {
+    return { ...DEFAULT_PORTFOLIO_SORT };
+  }
+}
+
+export function savePortfolioSort(sort: PortfolioSort) {
+  localStorage.setItem(SORT_KEY, JSON.stringify(sort));
+}
+
+export function sortPortfolios(items: PortfolioSummary[], sort: PortfolioSort): PortfolioSummary[] {
+  const rows = [...items];
+  const mul = sort.dir === "asc" ? 1 : -1;
+  rows.sort((a, b) => {
+    if (sort.by === "name") {
+      const cmp = (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" });
+      return mul * cmp || a.created_at - b.created_at;
+    }
+    if (sort.by === "perf") {
+      const av = a.return_pct;
+      const bv = b.return_pct;
+      const aMiss = av == null || Number.isNaN(av);
+      const bMiss = bv == null || Number.isNaN(bv);
+      if (aMiss && bMiss) return (a.name || "").localeCompare(b.name || "");
+      if (aMiss) return 1;
+      if (bMiss) return -1;
+      if (av === bv) return (a.name || "").localeCompare(b.name || "");
+      return mul * (av - bv);
+    }
+    return a.created_at - b.created_at;
+  });
+  return rows;
+}

@@ -75,7 +75,7 @@ def _unix(v: Any) -> int | None:
 
 
 def classify_headline(title: str | None, published: int | None, now: int | None = None) -> str | None:
-    """breaking = fresh or labeled; blackswan = severe headline (heuristic, not a news desk)."""
+    """breaking = labeled in the title; blackswan = severe headline (heuristic, not a news desk)."""
     text = (title or "").strip().lower()
     now = now or int(datetime.now(timezone.utc).timestamp())
     age = (now - published) if published else None
@@ -84,7 +84,7 @@ def classify_headline(title: str | None, published: int | None, now: int | None 
     fresh = age is not None and 0 <= age <= 45 * 60
     if swan and (fresh or labeled or (age is not None and age <= 6 * 3600)):
         return "blackswan"
-    if labeled or fresh:
+    if labeled:
         return "breaking"
     return None
 

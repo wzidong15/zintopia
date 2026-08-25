@@ -25,7 +25,7 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 - Watchlist persisted in the browser (`localStorage`); add with ★, remove with ×; sort by name or % day
 - Search by ticker or name
 - OHLCV chart in Eastern Time; default range is **1D** (`1h` / `3h` / `1d` / `5d` / `1mo` / `3mo` / `6mo` / `1y` / `5y`); optional **vs** overlay (off by default, ticker defaults to SPY)
-- **Market News**: session-wide Yahoo tape (three-column grid) with heuristic Breaking / Alert tags; polls every 60s (`ZINTOPIA_NEWS_REFRESH_SEC`, or `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`)
+- **Market News**: session-wide Yahoo tape (three-column grid); polls every 60s (`ZINTOPIA_NEWS_REFRESH_SEC`, or `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`). **Breaking** only if the headline contains words such as breaking / just in / flash / developing / alert; **Alert** is a separate severe-phrase heuristic
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
@@ -113,7 +113,7 @@ A free Polygon plan may still reject some snapshot endpoints (`NOT_AUTHORIZED`).
 | Movers | TradingView scanner, then Polygon gainers/losers if keyed |
 | Daily TA | tradingview-ta |
 | Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance`) |
-| Market news | Yahoo Finance RSS (`/news/rssindex` and GSPC headlines); Breaking / Alert tags are heuristics, not a news desk |
+| Market news | Yahoo Finance RSS (`/news/rssindex` and GSPC headlines). Breaking is title-keyword only (not recency). Alert tags are a severe-phrase heuristic, not a news desk |
 | Senate / House PTR trades | Official STOCK Act filings: House Clerk `YYYYFD.zip` + PTR PDFs; Senate eFD search (`efdsearch.senate.gov`). These are **trades**, not live holdings; filers have up to 45 days to disclose. Cached in `~/.zintopia/congress_ptr.json` (refreshed in the background, default 120-day lookback) |
 | LLM research / Vibe dialogs | OpenAI or Anthropic when a key is set |
 | Paper stock-portfolio marks / fills | Regular hours: same quote stack as `/api/quote`. When the NYSE cash session is closed (Eastern time): Yahoo **pre-market** (4:00–9:30), **after hours** (16:00–20:00), or last extended print overnight/weekend. SMA strategies use Yahoo `yf.download` history |

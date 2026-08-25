@@ -5,6 +5,12 @@ import NavChart from "./NavChart";
 import SymbolSearch from "./SymbolSearch";
 import VibePortfolioPanel from "./VibePortfolioPanel";
 import {
+  loadPortfolioSort,
+  PORTFOLIO_SORT_OPTIONS,
+  portfolioSortFromId,
+  portfolioSortId,
+  savePortfolioSort,
+  sortPortfolios,
   STRATEGY_OPTIONS,
   type Portfolio,
   type PortfolioStrategyKind,
@@ -74,6 +80,7 @@ export default function PortfolioPanel({
   const [stratKind, setStratKind] = useState<PortfolioStrategyKind>("manual");
   const [stratAuto, setStratAuto] = useState(false);
   const [stratSym, setStratSym] = useState("SPY");
+  const [fundSort, setFundSort] = useState(() => loadPortfolioSort());
   const cacheRef = useRef(new Map<string, Portfolio>());
 
   const applyPortfolio = (p: Portfolio) => {
@@ -311,6 +318,7 @@ export default function PortfolioPanel({
   };
 
   const hint = STRATEGY_OPTIONS.find((s) => s.id === stratKind)?.hint;
+  const sortedFunds = useMemo(() => sortPortfolios(items, fundSort), [items, fundSort]);
   const fundName =
     (detail?.id === selectedId && detail?.name) || items.find((x) => x.id === selectedId)?.name || null;
   const mark = sessionTitle(detail?.id === selectedId ? detail?.mark_session : null);
@@ -318,7 +326,27 @@ export default function PortfolioPanel({
   return (
     <div className="layout pf-layout">
       <aside className="col">
-        <div className="section-h">Stock portfolios</div>
+        <div className="section-h">
+          Stock portfolios
+          <label className="watch-sort">
+            <span>Sort</span>
+            <select
+              value={portfolioSortId(fundSort)}
+              onChange={(e) => {
+                const next = portfolioSortFromId(e.target.value);
+                savePortfolioSort(next);
+                setFundSort(next);
+              }}
+              aria-label="Sort portfolios"
+            >
+              {PORTFOLIO_SORT_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="pf-create">
           <input
             value={name}
@@ -343,7 +371,7 @@ export default function PortfolioPanel({
             (not committed to git). US stocks and ETFs only — options are not supported.
           </div>
         )}
-        {items.map((p) => (
+        {sortedFunds.map((p) => (
           <div key={p.id} className={`row ${p.id === selectedId ? "sel" : ""}`}>
             <button type="button" className="row-main" onClick={() => pickFund(p.id)}>
               <span className="sym">{p.name}</span>

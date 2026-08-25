@@ -25,7 +25,7 @@
 - 自选保存在浏览器（`localStorage`）；★ 添加，× 删除；可按名称或当日涨跌幅排序
 - 按代码或名称搜索
 - OHLCV 图表（美国东部时间）；默认区间 **1D**（`1h` / `3h` / `1d` / `5d` / `1mo` / `3mo` / `6mo` / `1y` / `5y`）；可选 **vs** 对照线（默认关闭，对照代码默认 SPY）
-- **Market News**：全市场 Yahoo 头条（三列网格），带启发式 Breaking / Alert 标签；默认每 60 秒刷新（`ZINTOPIA_NEWS_REFRESH_SEC`，或 `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`）
+- **Market News**：全市场 Yahoo 头条（三列网格）；默认每 60 秒刷新（`ZINTOPIA_NEWS_REFRESH_SEC`，或 `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`）。**Breaking** 仅当标题含 breaking / just in / flash / developing / alert 等词；**Alert** 是另一套严重措辞启发式
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
@@ -113,7 +113,7 @@ cp .env.example .env
 | 涨跌榜 | TradingView scanner，有密钥时再试 Polygon 涨跌幅 |
 | 日线技术分析 | tradingview-ta |
 | 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo Finance（`yfinance`） |
-| 市场新闻 | Yahoo Finance RSS（`/news/rssindex` 与 GSPC 头条）；Breaking / Alert 为启发式标签，不是新闻台判定 |
+| 市场新闻 | Yahoo Finance RSS（`/news/rssindex` 与 GSPC 头条）。Breaking 只看标题关键词（不看新旧）。Alert 为严重措辞启发式，不是新闻台判定 |
 | 参众两院 PTR 交易 | 官方 STOCK Act 申报：众议院书记官 `YYYYFD.zip` + PTR PDF；参议院 eFD 检索（`efdsearch.senate.gov`）。这些是 **交易**，不是实时持仓；申报人最多有 45 天披露期。缓存于 `~/.zintopia/congress_ptr.json`（后台刷新，默认回看 120 天） |
 | LLM 研究 / Vibe 对话 | 配置密钥后使用 OpenAI 或 Anthropic |
 | 模拟组合计价 / 成交 | 常规时段：与 `/api/quote` 相同行情栈。纽交所现金时段关闭时（东部时间）：Yahoo **盘前**（4:00–9:30）、**盘后**（16:00–20:00），或隔夜/周末最近一次延长时段成交价。SMA 策略使用 Yahoo `yf.download` 历史 |

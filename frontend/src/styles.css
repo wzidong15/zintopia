@@ -460,6 +460,13 @@ button { cursor: pointer; }
   top: 0;
   z-index: 2;
 }
+.section-h .watch-sort,
+.section-h .watch-sort select {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 550;
+}
+.section-h .watch-sort select { max-width: 176px; }
 .tabs {
   display: flex;
   gap: 2px;
