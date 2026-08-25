@@ -110,7 +110,7 @@ cp .env.example .env
 |---|---|
 | 行情 / 指数 / 自选 | Polygon snapshot（有密钥时）→ TradingView scanner → yfinance download → Yahoo ticker → Stooq |
 | 图表 | Yahoo Finance `yf.download` |
-| 涨跌榜 | TradingView scanner，有密钥时再试 Polygon 涨跌幅 |
+| 涨跌榜 | TradingView scanner，套餐允许时再试 Polygon 涨跌幅，再回退 Yahoo 涨幅 / 跌幅 / 最活跃 |
 | 日线技术分析 | tradingview-ta |
 | 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo Finance（`yfinance`） |
 | 市场新闻 | Yahoo Finance RSS（`/news/rssindex` 与 GSPC 头条）。Breaking 只看标题关键词（不看新旧）。Alert 为严重措辞启发式，不是新闻台判定 |

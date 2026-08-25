@@ -110,7 +110,7 @@ A free Polygon plan may still reject some snapshot endpoints (`NOT_AUTHORIZED`).
 |---|---|
 | Quotes / indices / watchlist | Polygon snapshot (if keyed) → TradingView scanner → yfinance download → Yahoo ticker → Stooq |
 | Charts | Yahoo Finance `yf.download` |
-| Movers | TradingView scanner, then Polygon gainers/losers if keyed |
+| Movers | TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo day gainers / losers / most actives |
 | Daily TA | tradingview-ta |
 | Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance`) |
 | Market news | Yahoo Finance RSS (`/news/rssindex` and GSPC headlines). Breaking is title-keyword only (not recency). Alert tags are a severe-phrase heuristic, not a news desk |

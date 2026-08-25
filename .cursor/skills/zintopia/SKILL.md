@@ -25,7 +25,7 @@ Quotes (`/api/quote`, `/api/quotes`, `/api/indices`):
 2. TradingView scanner via `tradingview-screener` (~15m delay unsigned)
 3. Yahoo `yfinance` fallback
 
-Charts, profile, news: Yahoo Finance. Daily TA rating: `tradingview-ta`. Movers: TradingView scanner.
+Charts, profile, news: Yahoo Finance. Daily TA rating: `tradingview-ta`. Movers: TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo `day_gainers` / `day_losers` / `most_actives`.
 
 Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay honest about delay.
 

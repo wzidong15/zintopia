@@ -2,7 +2,7 @@
 
 Free sources (same stack as the TradingView / Vibe-Trading MCPs):
   - TradingView scanner  -> live-ish quotes, movers, ratings (delayed ~15m unsigned)
-  - Yahoo Finance        -> OHLCV candles, company profile, news
+  - Yahoo Finance        -> OHLCV candles, company profile, news, movers fallback
 """
 
 from __future__ import annotations
@@ -403,6 +403,10 @@ def _request_headers(json_body: dict[str, Any] | None) -> dict[str, str]:
     headers = {"User-Agent": YAHOO_UA}
     if json_body is not None:
         headers.update(TV_SCAN_HEADERS)
+        headers["User-Agent"] = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
     return headers
 
 
@@ -492,7 +496,10 @@ def _http_json(
     json_body: dict[str, Any] | None = None,
     timeout: float = 15.0,
 ) -> Any:
-    return json.loads(_http_text(method, url, params=params, json_body=json_body, timeout=timeout))
+    text = _http_text(method, url, params=params, json_body=json_body, timeout=timeout)
+    if not (text or "").strip():
+        raise RuntimeError("empty response")
+    return json.loads(text)
 
 
 def _tv_get_scanner_data(q: Query) -> tuple[int, pd.DataFrame]:
@@ -1457,6 +1464,9 @@ def _best_quotes(symbols: list[str]) -> list[dict[str, Any]]:
 def _polygon_movers(kind: Literal["gainers", "losers"], limit: int) -> list[dict[str, Any]]:
     url = f"{POLYGON_BASE}/v2/snapshot/locale/us/markets/stocks/{kind}"
     body = _http_json("GET", url, params={"apiKey": POLYGON_KEY})
+    status = str(body.get("status") or "").upper()
+    if status in ("NOT_AUTHORIZED", "ERROR", "NOT_FOUND"):
+        raise RuntimeError(body.get("message") or status or "polygon movers failed")
     out: list[dict[str, Any]] = []
     for t in (body.get("tickers") or [])[:limit]:
         sym = str(t.get("ticker") or "").upper()
@@ -1464,7 +1474,8 @@ def _polygon_movers(kind: Literal["gainers", "losers"], limit: int) -> list[dict
             continue
         day = t.get("day") or {}
         last = t.get("lastTrade") or {}
-        price = _clean(last.get("p")) or _clean(day.get("c"))
+        minute = t.get("min") or {}
+        price = _clean(last.get("p")) or _clean(minute.get("c")) or _clean(day.get("c"))
         if price is None:
             continue
         out.append(
@@ -1485,6 +1496,44 @@ def _polygon_movers(kind: Literal["gainers", "losers"], limit: int) -> list[dict
                 "as_of": int(time.time()),
             }
         )
+    return out
+
+
+def _yahoo_movers(kind: Literal["gainers", "losers", "active"], limit: int) -> list[dict[str, Any]]:
+    scr = {"gainers": "day_gainers", "losers": "day_losers", "active": "most_actives"}[kind]
+    kwargs: dict[str, Any] = {"count": max(limit, 5)}
+    sess = _yf_session()
+    if sess is not None:
+        kwargs["session"] = sess
+    raw = yf.screen(scr, **kwargs)
+    quotes = raw.get("quotes") if isinstance(raw, dict) else None
+    out: list[dict[str, Any]] = []
+    for q in quotes or []:
+        if not isinstance(q, dict):
+            continue
+        sym = str(q.get("symbol") or "").upper()
+        if not sym:
+            continue
+        row = _make_quote(
+            sym,
+            price=q.get("regularMarketPrice"),
+            prev=q.get("regularMarketPreviousClose"),
+            open_=q.get("regularMarketOpen"),
+            high=q.get("regularMarketDayHigh"),
+            low=q.get("regularMarketDayLow"),
+            volume=q.get("regularMarketVolume"),
+            market_cap=q.get("marketCap"),
+            name=q.get("shortName") or q.get("longName") or q.get("displayName") or sym,
+            source="yfinance",
+            delay="yahoo",
+        )
+        if row["change_pct"] is None:
+            row["change_pct"] = _clean(q.get("regularMarketChangePercent"))
+        if row["change"] is None:
+            row["change"] = _clean(q.get("regularMarketChange"))
+        out.append(row)
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -1523,6 +1572,14 @@ def _fetch_movers_items(kind: Literal["gainers", "losers", "active"], limit: int
             errors.append("polygon: empty")
         except Exception as e:
             errors.append(f"polygon: {e}")
+
+    try:
+        items = _yahoo_movers(kind, limit)
+        if items:
+            return items
+        errors.append("yahoo: empty")
+    except Exception as e:
+        errors.append(f"yahoo: {e}")
 
     raise RuntimeError("; ".join(errors) if errors else "Movers unavailable")
 

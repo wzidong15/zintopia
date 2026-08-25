@@ -45,6 +45,15 @@ export function numish(v: unknown): number | null {
   return null;
 }
 
+export function quoteSourceLabel(source?: string | null): string | null {
+  const s = (source || "").toLowerCase();
+  if (!s) return null;
+  if (s.includes("polygon") || s.includes("massive")) return "Polygon";
+  if (s.includes("yahoo") || s.includes("yfinance")) return "Yahoo";
+  if (s.includes("tradingview") || s.includes("tv")) return "TradingView";
+  return source || null;
+}
+
 export function dividendYieldPct(quote: Quote | null, profile: Profile | null): number | null {
   if (quote?.dividend_yield != null && Number.isFinite(quote.dividend_yield)) {
     const n = quote.dividend_yield;

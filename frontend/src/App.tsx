@@ -24,7 +24,7 @@ import {
   fmtRefreshSec,
 } from "./config";
 import { marketClock } from "./marketSession";
-import { cls, dividendYieldPct, fmt, fmtEarnings, fmtInt, numish, pct, pctFrac, rvol } from "./format";
+import { cls, dividendYieldPct, fmt, fmtEarnings, fmtInt, numish, pct, pctFrac, quoteSourceLabel, rvol } from "./format";
 import NewsFeed from "./NewsFeed";
 const RANGES = ["1h", "3h", "1d", "5d", "1mo", "3mo", "6mo", "1y", "5y"] as const;
 
@@ -585,6 +585,7 @@ export default function App() {
     () => sortWatchlist(watch, watchSymbols, watchSort),
     [watch, watchSymbols, watchSort],
   );
+  const moversSource = useMemo(() => quoteSourceLabel(movers[0]?.source), [movers]);
   const stats = useMemo(() => {
     const avgVol = quote?.avg_volume ?? numish(profile?.averageVolume);
     const vol = quote?.volume;
@@ -812,19 +813,23 @@ export default function App() {
             </div>
           </div>
           {board === "screen" ? (
-            <ScreenerPanel
-              selected={symbol}
-              onPick={pick}
-              watched={isWatched}
-              onToggleWatch={toggleWatch}
-            />
+            <>
+              <div className="universe-src">Source · TradingView</div>
+              <ScreenerPanel
+                selected={symbol}
+                onPick={pick}
+                watched={isWatched}
+                onToggleWatch={toggleWatch}
+              />
+            </>
           ) : (
             <>
+              {moversSource && <div className="universe-src">Source · {moversSource}</div>}
               {moversLoading && movers.length === 0 && (
                 <div className="watch-empty">Loading {board}…</div>
               )}
               {moversErr && movers.length === 0 && !moversLoading && (
-                <div className="watch-empty movers-err">Movers unavailable. Check network or API keys.</div>
+                <div className="watch-empty movers-err">Movers unavailable.</div>
               )}
               {movers.map((m) => (
                 <QuoteRow
