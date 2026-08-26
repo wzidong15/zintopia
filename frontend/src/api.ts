@@ -128,6 +128,26 @@ export const api = {
     ),
   createPortfolio: (name: string, amount: number) =>
     sendJson<Portfolio>("/api/portfolios", "POST", { name, amount }),
+  importPortfolio: async (opts: {
+    name: string;
+    cash?: number;
+    file?: File;
+    csv?: string;
+    costBasis: "mark" | "csv";
+  }) => {
+    const fd = new FormData();
+    fd.append("name", opts.name);
+    fd.append("cost_basis", opts.costBasis);
+    if (opts.cash != null && Number.isFinite(opts.cash)) fd.append("cash", String(opts.cash));
+    if (opts.file) fd.append("file", opts.file);
+    if (opts.csv) fd.append("csv_text", opts.csv);
+    const res = await fetch("/api/portfolios/import", { method: "POST", body: fd });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(errorFromBody(text, res.statusText));
+    }
+    return res.json() as Promise<Portfolio>;
+  },
   deletePortfolio: (id: string) =>
     sendJson<{ ok: boolean }>(`/api/portfolios/${encodeURIComponent(id)}`, "DELETE"),
   portfolioOrder: (

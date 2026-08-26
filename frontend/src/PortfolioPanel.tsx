@@ -5,16 +5,20 @@ import NavChart from "./NavChart";
 import SymbolSearch from "./SymbolSearch";
 import VibePortfolioPanel from "./VibePortfolioPanel";
 import {
+  isImportedPortfolio,
+  loadImportSort,
   loadPortfolioSort,
   PORTFOLIO_SORT_OPTIONS,
   portfolioSortFromId,
   portfolioSortId,
+  saveImportSort,
   savePortfolioSort,
   sortPortfolios,
   STRATEGY_OPTIONS,
   type Portfolio,
-  type PortfolioStrategyKind,
+  type PortfolioCostBasis,
   type PortfolioSummary,
+  type PortfolioStrategyKind,
 } from "./portfolio";
 import { sessionTitle } from "./marketSession";
 import type { Quote } from "./types";
@@ -57,6 +61,8 @@ function stubFromSummary(s: PortfolioSummary): Portfolio {
     snapshots: [],
     strategy: s.strategy,
     last_error: s.last_error,
+    origin: s.origin,
+    cost_basis: s.cost_basis,
   };
 }
 
@@ -70,6 +76,13 @@ export default function PortfolioPanel({
   const [detail, setDetail] = useState<Portfolio | null>(null);
   const [name, setName] = useState("");
   const [amount, setAmount] = useState("100000");
+  const [importName, setImportName] = useState("");
+  const [importCash, setImportCash] = useState("");
+  const [importPaste, setImportPaste] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importBasis, setImportBasis] = useState<PortfolioCostBasis | "">("");
+  const [importNote, setImportNote] = useState<string | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [tradeSym, setTradeSym] = useState("AAPL");
@@ -81,6 +94,7 @@ export default function PortfolioPanel({
   const [stratAuto, setStratAuto] = useState(false);
   const [stratSym, setStratSym] = useState("SPY");
   const [fundSort, setFundSort] = useState(() => loadPortfolioSort());
+  const [importSort, setImportSort] = useState(() => loadImportSort());
   const cacheRef = useRef(new Map<string, Portfolio>());
 
   const applyPortfolio = (p: Portfolio) => {
@@ -103,6 +117,8 @@ export default function PortfolioPanel({
                 updated_at: p.updated_at,
                 holdings_count: p.holdings?.length ?? x.holdings_count,
                 last_error: p.last_error,
+                origin: p.origin ?? x.origin,
+                cost_basis: p.cost_basis ?? x.cost_basis,
               }
             : x,
         ),
@@ -217,6 +233,47 @@ export default function PortfolioPanel({
       .finally(() => setBusy(false));
   };
 
+  const importSnapshot = () => {
+    const leftover = importCash.trim() ? Number(importCash.replace(/,/g, "")) : undefined;
+    if (leftover != null && (!Number.isFinite(leftover) || leftover < 0)) {
+      setErr("Leftover cash must be zero or a positive number.");
+      return;
+    }
+    if (!importFile && !importPaste.trim()) {
+      setErr("Upload a broker CSV or paste symbol, shares, average cost.");
+      return;
+    }
+    if (importBasis !== "mark" && importBasis !== "csv") {
+      setErr("Choose how to measure performance: import-time price or CSV cost basis.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setImportNote(null);
+    api
+      .importPortfolio({
+        name: importName.trim() || importFile?.name.replace(/\.[^.]+$/, "") || "Broker snapshot",
+        cash: leftover,
+        file: importFile || undefined,
+        csv: importPaste.trim() || undefined,
+        costBasis: importBasis,
+      })
+      .then((p) => {
+        setImportName("");
+        setImportCash("");
+        setImportPaste("");
+        setImportFile(null);
+        setImportBasis("");
+        if (importFileRef.current) importFileRef.current.value = "";
+        setSelectedId(p.id);
+        applyPortfolio(p);
+        if (p.import_note) setImportNote(p.import_note);
+        return loadList(true);
+      })
+      .catch((e) => setErr(String(e.message || e)))
+      .finally(() => setBusy(false));
+  };
+
   const remove = (id: string) => {
     if (!window.confirm("Delete this stock portfolio?")) return;
     api
@@ -318,34 +375,81 @@ export default function PortfolioPanel({
   };
 
   const hint = STRATEGY_OPTIONS.find((s) => s.id === stratKind)?.hint;
-  const sortedFunds = useMemo(() => sortPortfolios(items, fundSort), [items, fundSort]);
+  const paperFunds = useMemo(
+    () => sortPortfolios(items.filter((p) => !isImportedPortfolio(p)), fundSort),
+    [items, fundSort],
+  );
+  const importedFunds = useMemo(
+    () => sortPortfolios(items.filter((p) => isImportedPortfolio(p)), importSort),
+    [items, importSort],
+  );
   const fundName =
     (detail?.id === selectedId && detail?.name) || items.find((x) => x.id === selectedId)?.name || null;
   const mark = sessionTitle(detail?.id === selectedId ? detail?.mark_session : null);
+  const importedDetail = detail ? isImportedPortfolio(detail) : false;
+  const basisLabel =
+    detail?.cost_basis === "mark" ? "import-time prices" : detail?.cost_basis === "csv" ? "CSV cost basis" : null;
+
+  const renderFundRow = (p: PortfolioSummary) => (
+    <div key={p.id} className={`row ${p.id === selectedId ? "sel" : ""}`}>
+      <button type="button" className="row-main" onClick={() => pickFund(p.id)}>
+        <span className="sym">{p.name}</span>
+        <span>
+          <div className="px">{money(p.nav)}</div>
+          <div className={`meta ${cls(p.return_pct)}`}>{pct(p.return_pct)}</div>
+        </span>
+        <span className="muted">
+          {isImportedPortfolio(p)
+            ? p.cost_basis === "mark"
+              ? "import px"
+              : "csv basis"
+            : p.strategy?.kind === "manual"
+              ? "manual"
+              : p.strategy?.kind}
+        </span>
+      </button>
+      <button
+        type="button"
+        className="remove-btn"
+        title="Delete portfolio"
+        onClick={() => remove(p.id)}
+      >
+        ×
+      </button>
+    </div>
+  );
+
+  const sortSelect = (
+    value: string,
+    onChange: (id: string) => void,
+    label: string,
+  ) => (
+    <label className="watch-sort">
+      <span>Sort</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+      >
+        {PORTFOLIO_SORT_OPTIONS.map((opt) => (
+          <option key={opt.id} value={opt.id}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 
   return (
     <div className="layout pf-layout">
       <aside className="col">
         <div className="section-h">
-          Stock portfolios
-          <label className="watch-sort">
-            <span>Sort</span>
-            <select
-              value={portfolioSortId(fundSort)}
-              onChange={(e) => {
-                const next = portfolioSortFromId(e.target.value);
-                savePortfolioSort(next);
-                setFundSort(next);
-              }}
-              aria-label="Sort portfolios"
-            >
-              {PORTFOLIO_SORT_OPTIONS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          Paper funds
+          {sortSelect(portfolioSortId(fundSort), (id) => {
+            const next = portfolioSortFromId(id);
+            savePortfolioSort(next);
+            setFundSort(next);
+          }, "Sort paper funds")}
         </div>
         <div className="pf-create">
           <input
@@ -365,32 +469,87 @@ export default function PortfolioPanel({
             Create fund
           </button>
         </div>
-        {items.length === 0 && (
+        {paperFunds.length === 0 && (
           <div className="watch-empty">
-            Create a stock portfolio with a name and starting cash. Saved on this machine only
-            (not committed to git). US stocks and ETFs only — options are not supported.
+            Create a paper fund with a name and starting cash. Saved on this machine only. US
+            stocks and ETFs only — options are not supported.
           </div>
         )}
-        {sortedFunds.map((p) => (
-          <div key={p.id} className={`row ${p.id === selectedId ? "sel" : ""}`}>
-            <button type="button" className="row-main" onClick={() => pickFund(p.id)}>
-              <span className="sym">{p.name}</span>
-              <span>
-                <div className="px">{money(p.nav)}</div>
-                <div className={`meta ${cls(p.return_pct)}`}>{pct(p.return_pct)}</div>
-              </span>
-              <span className="muted">{p.strategy?.kind === "manual" ? "manual" : p.strategy?.kind}</span>
-            </button>
-            <button
-              type="button"
-              className="remove-btn"
-              title="Delete portfolio"
-              onClick={() => remove(p.id)}
-            >
-              ×
-            </button>
+        {paperFunds.map(renderFundRow)}
+
+        <div className="section-h pf-block-split">
+          Imported snapshots
+          {sortSelect(portfolioSortId(importSort), (id) => {
+            const next = portfolioSortFromId(id);
+            saveImportSort(next);
+            setImportSort(next);
+          }, "Sort imported snapshots")}
+        </div>
+        <div className="pf-create">
+          <div className="muted pf-hint">
+            Read-only copy from a broker export. Zintopia does not log into Robinhood, IBKR, or
+            any broker. Stocks and ETFs only — options are skipped.
           </div>
-        ))}
+          <input
+            value={importName}
+            placeholder="Snapshot name"
+            onChange={(e) => setImportName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && importSnapshot()}
+          />
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+            onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+            aria-label="Broker positions CSV"
+          />
+          <textarea
+            className="pf-paste"
+            rows={4}
+            value={importPaste}
+            placeholder={"Paste CSV or TSV, e.g.\nsymbol,shares,avg_cost\nAAPL,10,150"}
+            onChange={(e) => setImportPaste(e.target.value)}
+          />
+          <input
+            value={importCash}
+            placeholder="Leftover cash (optional)"
+            inputMode="decimal"
+            onChange={(e) => setImportCash(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && importSnapshot()}
+          />
+          <fieldset className="pf-basis">
+            <legend>Performance vs</legend>
+            <label className="pf-check">
+              <input
+                type="radio"
+                name="import-basis"
+                checked={importBasis === "mark"}
+                onChange={() => setImportBasis("mark")}
+              />
+              Price at import time
+            </label>
+            <label className="pf-check">
+              <input
+                type="radio"
+                name="import-basis"
+                checked={importBasis === "csv"}
+                onChange={() => setImportBasis("csv")}
+              />
+              Actual cost basis from CSV
+            </label>
+          </fieldset>
+          <button type="button" className="llm-btn" onClick={importSnapshot} disabled={busy}>
+            Import snapshot
+          </button>
+          {importNote && <div className="muted pf-hint">{importNote}</div>}
+        </div>
+        {importedFunds.length === 0 && (
+          <div className="watch-empty">
+            Import a CSV snapshot from Robinhood, IBKR, Fidelity, or Schwab. Choose whether
+            return is measured from the price at import or from the CSV cost basis.
+          </div>
+        )}
+        {importedFunds.map(renderFundRow)}
       </aside>
 
       <main className="center">
@@ -402,8 +561,9 @@ export default function PortfolioPanel({
               <div>
                 <h1>{detail.name}</h1>
                 <div className="name">
-                  Started {money(detail.initial_cash)} · cash {money(detail.cash)} · stock shares only,
-                  no options
+                  {importedDetail
+                    ? `Imported snapshot · performance vs ${basisLabel || "cost basis"} · cash ${money(detail.cash)} · stock shares only, no options`
+                    : `Started ${money(detail.initial_cash)} · cash ${money(detail.cash)} · stock shares only, no options`}
                   {mark ? ` · marked to Yahoo ${mark}` : ""}
                 </div>
               </div>

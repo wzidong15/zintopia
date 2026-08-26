@@ -46,6 +46,7 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET /api/deep/{symbol}` | Insider (Yahoo Form 4), options (next 3 expiries), Congress PTRs (House Clerk + Senate eFD), news, forecast, research stance |
 | `GET /api/snapshot` | Dashboard bundle |
 | `GET/POST /api/portfolios` | Stock paper funds (shares only, no options) |
+| `POST /api/portfolios/import` | Imported snapshot from a read-only broker CSV/TSV (`cost_basis=mark` import-time price, or `csv` actual basis; no login) |
 | `POST /api/portfolios/{id}/orders` | Simulated trades |
 | `PUT /api/portfolios/{id}/strategy` | Manual or auto quant strategy |
 | `POST /api/portfolios/{id}/tick` | Mark-to-market / auto step |
@@ -63,7 +64,7 @@ GitHub dark canvas `#0D1117` with logo greens: `--accent` / `--up` `#56D364`, `-
 - Polygon MCP is `polygon` in `~/.cursor/mcp.json` (binary `mcp_massive`; `POLYGON_API_KEY` still works).
 - Never commit API keys. Put them in `~/.cursor/mcp.json` env and repo `.env` (gitignored).
 - Do not add new MCPs (OpenBB, Unusual Whales, WeChat, etc.) unless the user approves.
-- OpenInsider / Robinhood / Vibe-Trading are agent tools. The website can run a Vibe-style paper-fund review via `POST /api/portfolios/{id}/vibe` using Yahoo + TradingView TA (same US stack as those MCP tools); it does not spawn `vibe-trading-mcp`.
+- OpenInsider / Robinhood / Vibe-Trading are agent tools. The website can run a Vibe-style paper-fund review via `POST /api/portfolios/{id}/vibe` using Yahoo + TradingView TA (same US stack as those MCP tools); it does not spawn `vibe-trading-mcp`. Broker import on the portfolio page is a local CSV/TSV snapshot only — do not wire unofficial Robinhood login, IBKR passwords, or Plaid/SnapTrade unless the user approves.
 
 ## When extending
 

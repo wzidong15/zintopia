@@ -11,8 +11,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+
+from broker_import import MAX_BYTES as IMPORT_MAX_BYTES
+from broker_import import parse_broker_csv
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LEGACY_DATA_FILE = DATA_DIR / "portfolios.json"
@@ -477,6 +480,25 @@ def _holding_prices(p: dict[str, Any]) -> dict[str, float]:
     return out
 
 
+def _origin(p: dict[str, Any]) -> str:
+    raw = str(p.get("origin") or "").strip().lower()
+    if raw in ("import", "paper"):
+        return raw
+    for t in p.get("trades") or []:
+        if str(t.get("source") or "") == "broker-csv":
+            return "import"
+    return "paper"
+
+
+def _cost_basis_mode(p: dict[str, Any]) -> str | None:
+    raw = str(p.get("cost_basis") or "").strip().lower()
+    if raw in ("mark", "csv"):
+        return raw
+    if _origin(p) == "import":
+        return "csv"
+    return None
+
+
 def _enrich(p: dict[str, Any], prices: dict[str, float] | None = None) -> dict[str, Any]:
     if prices is None:
         prices = {**_holding_prices(p), **_price_map(_symbols(p))}
@@ -517,6 +539,8 @@ def _enrich(p: dict[str, Any], prices: dict[str, float] | None = None) -> dict[s
         st["next_run_at"] = (last + interval) if last else _now()
     return {
         **{k: v for k, v in p.items() if k not in ("holdings", "strategy")},
+        "origin": _origin(p),
+        "cost_basis": _cost_basis_mode(p),
         "strategy": st,
         "holdings": holdings_out,
         "nav": nav,
@@ -543,6 +567,8 @@ def _summary(p: dict[str, Any], prices: dict[str, float] | None = None) -> dict[
         "created_at": e.get("created_at"),
         "holdings_count": len(e.get("holdings") or []),
         "last_error": e.get("last_error"),
+        "origin": e.get("origin") or "paper",
+        "cost_basis": e.get("cost_basis"),
     }
 
 
@@ -597,10 +623,148 @@ def create_portfolio(body: CreateBody):
             "snapshots": [{"t": now, "nav": _money(body.amount), "cash": _money(body.amount)}],
             "strategy": {"kind": "manual", "auto": False, "symbol": "SPY", "last_run_at": 0, "note": ""},
             "last_error": None,
+            "origin": "paper",
         }
         store.setdefault("portfolios", []).append(p)
         _save(store)
         return _enrich(p)
+
+
+@router.post("/import")
+async def import_portfolio(
+    name: str = Form(""),
+    cash: str = Form(""),
+    csv_text: str = Form(""),
+    cost_basis: str = Form(""),
+    file: UploadFile | None = File(None),
+):
+    """Create an imported snapshot from a read-only broker CSV/TSV. No login."""
+    text = (csv_text or "").strip()
+    if not text and file is not None and (file.filename or "").strip():
+        raw = await file.read(IMPORT_MAX_BYTES + 1)
+        if len(raw) > IMPORT_MAX_BYTES:
+            raise HTTPException(400, "File too large (1 MB max)")
+        text = raw.decode("utf-8-sig", errors="replace")
+    if not text.strip():
+        raise HTTPException(400, "Upload a CSV or paste positions (symbol, shares, average cost)")
+    mode = str(cost_basis or "").strip().lower()
+    if mode not in ("mark", "csv"):
+        raise HTTPException(400, "Choose import-time price or CSV cost basis")
+    try:
+        parsed = parse_broker_csv(text)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    rows = list(parsed.get("holdings") or [])
+    skipped = list(parsed.get("skipped") or [])
+    if not rows:
+        hint = skipped[0]["reason"] if skipped else "no stock/ETF rows"
+        raise HTTPException(400, f"No importable holdings ({hint})")
+
+    cash_override: float | None = None
+    if str(cash or "").strip():
+        try:
+            cash_override = float(str(cash).replace(",", "").replace("$", "").strip())
+        except ValueError as e:
+            raise HTTPException(400, "Cash must be a number") from e
+        if cash_override < 0:
+            raise HTTPException(400, "Cash cannot be negative")
+
+    marks = _price_map([str(h["symbol"]) for h in rows])
+    holdings: dict[str, dict[str, float]] = {}
+    trades: list[dict[str, Any]] = []
+    cost_sum = 0.0
+    used_mark_fallback = 0
+    now = _now()
+    for h in rows:
+        sym = str(h["symbol"]).upper()
+        shares = _shares(float(h["shares"]))
+        csv_avg = float(h.get("avg_cost") or 0)
+        mark_px = float(marks.get(sym) or 0)
+        if mode == "mark":
+            avg = mark_px
+            if avg <= 0:
+                skipped.append({"symbol": sym, "reason": "no quote at import"})
+                continue
+        else:
+            avg = csv_avg if csv_avg > 0 else mark_px
+            if csv_avg <= 0 and mark_px > 0:
+                used_mark_fallback += 1
+            if shares <= 0 or avg <= 0:
+                skipped.append({"symbol": sym, "reason": "no cost basis or quote"})
+                continue
+        if shares <= 0:
+            skipped.append({"symbol": sym, "reason": "no long shares"})
+            continue
+        last = mark_px if mark_px > 0 else avg
+        holdings[sym] = {
+            "shares": shares,
+            "avg_cost": _money(avg),
+            "last_price": _money(last),
+        }
+        notional = _money(shares * avg)
+        cost_sum += notional
+        trades.append(
+            {
+                "t": now,
+                "symbol": sym,
+                "side": "buy",
+                "shares": shares,
+                "price": _money(avg),
+                "notional": notional,
+                "source": "broker-csv",
+            }
+        )
+    if not holdings:
+        raise HTTPException(400, "Could not price any imported names")
+
+    leftover = cash_override
+    if leftover is None:
+        leftover = float(parsed.get("cash") or 0)
+    leftover = max(0.0, leftover)
+    initial = _money(leftover + cost_sum)
+    fund_name = (name or "").strip() or "Broker snapshot"
+    notes: list[str] = [f"Imported {len(holdings)} names."]
+    if skipped:
+        notes.append(f"Skipped {len(skipped)} row(s) (options, crypto, or invalid).")
+    if used_mark_fallback:
+        notes.append(f"Used import-time price for {used_mark_fallback} name(s) missing CSV cost.")
+    note = " ".join(notes)
+
+    with _lock:
+        store = _load()
+        if len(store.get("portfolios") or []) >= MAX_PORTFOLIOS:
+            raise HTTPException(400, f"At most {MAX_PORTFOLIOS} portfolios")
+        p = {
+            "id": uuid.uuid4().hex[:12],
+            "name": fund_name[:80],
+            "initial_cash": initial,
+            "cash": _money(leftover),
+            "created_at": now,
+            "updated_at": now,
+            "holdings": holdings,
+            "trades": trades[-MAX_TRADES:],
+            "snapshots": [
+                {
+                    "t": now,
+                    "nav": _money(
+                        leftover
+                        + sum(float(h["shares"]) * float(h["last_price"]) for h in holdings.values())
+                    ),
+                    "cash": _money(leftover),
+                }
+            ],
+            "strategy": {"kind": "manual", "auto": False, "symbol": "SPY", "last_run_at": 0, "note": ""},
+            "last_error": None,
+            "origin": "import",
+            "cost_basis": mode,
+        }
+        store.setdefault("portfolios", []).append(p)
+        _save(store)
+        out = _enrich(p, marks)
+        out["import_note"] = note
+        if skipped:
+            out["import_skipped"] = skipped[:20]
+        return out
 
 
 @router.get("/{pid}")

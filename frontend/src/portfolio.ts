@@ -40,6 +40,9 @@ export type PortfolioSnapshot = {
   cash: number;
 };
 
+export type PortfolioOrigin = "paper" | "import";
+export type PortfolioCostBasis = "mark" | "csv";
+
 export type Portfolio = {
   id: string;
   name: string;
@@ -57,6 +60,10 @@ export type Portfolio = {
   strategy?: PortfolioStrategy;
   last_error?: string | null;
   tick_note?: string | null;
+  import_note?: string | null;
+  import_skipped?: { symbol: string; reason: string }[];
+  origin?: PortfolioOrigin;
+  cost_basis?: PortfolioCostBasis | null;
   mark_session?: "pre" | "rth" | "post" | "closed" | string;
 };
 
@@ -73,6 +80,8 @@ export type PortfolioSummary = {
   created_at: number;
   holdings_count: number;
   last_error?: string | null;
+  origin?: PortfolioOrigin;
+  cost_basis?: PortfolioCostBasis | null;
 };
 
 export const STRATEGY_OPTIONS: { id: PortfolioStrategyKind; label: string; hint: string }[] = [
@@ -84,6 +93,7 @@ export const STRATEGY_OPTIONS: { id: PortfolioStrategyKind; label: string; hint:
 ];
 
 const SORT_KEY = "zintopia.portfolios.sort";
+const IMPORT_SORT_KEY = "zintopia.portfolios.import.sort";
 
 export type PortfolioSortBy = "added" | "name" | "perf";
 export type PortfolioSortDir = "asc" | "desc";
@@ -114,9 +124,9 @@ export function portfolioSortFromId(id: string): PortfolioSort {
   return opt ? { by: opt.by, dir: opt.dir } : { ...DEFAULT_PORTFOLIO_SORT };
 }
 
-export function loadPortfolioSort(): PortfolioSort {
+export function loadPortfolioSort(key = SORT_KEY): PortfolioSort {
   try {
-    const raw = localStorage.getItem(SORT_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return { ...DEFAULT_PORTFOLIO_SORT };
     const parsed = JSON.parse(raw) as Partial<PortfolioSort>;
     const by: PortfolioSortBy =
@@ -128,8 +138,25 @@ export function loadPortfolioSort(): PortfolioSort {
   }
 }
 
-export function savePortfolioSort(sort: PortfolioSort) {
-  localStorage.setItem(SORT_KEY, JSON.stringify(sort));
+export function savePortfolioSort(sort: PortfolioSort, key = SORT_KEY) {
+  localStorage.setItem(key, JSON.stringify(sort));
+}
+
+export function loadImportSort(): PortfolioSort {
+  return loadPortfolioSort(IMPORT_SORT_KEY);
+}
+
+export function saveImportSort(sort: PortfolioSort) {
+  savePortfolioSort(sort, IMPORT_SORT_KEY);
+}
+
+export function isImportedPortfolio(p: {
+  origin?: string | null;
+  trades?: { source?: string }[] | null;
+}): boolean {
+  if (p.origin === "import") return true;
+  if (p.origin === "paper") return false;
+  return (p.trades || []).some((t) => t.source === "broker-csv");
 }
 
 export function sortPortfolios(items: PortfolioSummary[], sort: PortfolioSort): PortfolioSummary[] {

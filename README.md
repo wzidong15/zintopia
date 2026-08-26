@@ -56,7 +56,7 @@ On macOS, `start.sh` sets `ZINTOPIA_BIND_INTERFACE=en0` so outbound HTTPS can bi
 The **Stock portfolio** tab is a local paper-trading sandbox for **US stocks and ETFs**. It does not support options (calls, puts, or spreads). Nothing is sent to a broker. During regular hours, fills and NAV use the same quote stack as the research UI. When the NYSE cash session is closed (Eastern time), NAV and paper fills mark to Yahoo **pre-market** (4:00–9:30) or **after hours** (16:00–20:00); overnight and weekends use the last extended print.
 
 1. Open **Stock portfolio** in the header.
-2. Create a fund with a name and starting cash (for example `100000`).
+2. Create a **paper fund** with a name and starting cash (for example `100000`), or import a read-only CSV/TSV snapshot under **Imported snapshots**. Broker exports (Robinhood, IBKR, Fidelity, Schwab) and a generic `symbol,shares,avg_cost` file both work. Paste works too. Leftover cash is optional. Before import, choose how return is measured: **price at import time** (P/L starts near zero) or **actual cost basis from the CSV**. Options and crypto rows are skipped. This is a one-time copy — Zintopia does not log into any broker and cannot trade a live account. Paper funds and imported snapshots are listed and sorted separately.
 3. Place simulated **buy** / **sell** share orders by quantity or dollar amount, or attach an automatic strategy and turn **Auto** on.
 4. Watch NAV, cash, unrealized P/L, max drawdown, the NAV chart, holdings, and the trade log.
 5. Use the **Vibe dialog** on the fund page. **Analyze fund** posts a structured review; type in the box to follow up on the same conversation (Yahoo quotes/news and daily TA, same US stack as [Vibe-Trading MCP](https://github.com/HKUDS/Vibe-Trading)). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Click a ticker in the notes to load it into the paper order ticket.
@@ -146,6 +146,7 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime.
 | `POST /api/llm-advice/{symbol}/chat` | Follow-up in the same `conversation_id` |
 | `GET /api/portfolios` | Stock portfolio summaries (marked to market) |
 | `POST /api/portfolios` | Create fund `{name, amount}` |
+| `POST /api/portfolios/import` | Create imported snapshot from broker CSV/TSV (`file` or `csv_text`; `cost_basis=mark\|csv`; optional `name`, `cash`) |
 | `GET /api/portfolios/{id}` | Holdings, trades, NAV snapshots |
 | `DELETE /api/portfolios/{id}` | Delete fund |
 | `POST /api/portfolios/{id}/orders` | Paper buy/sell (`shares` or `notional`) |
@@ -161,6 +162,7 @@ backend/newsfeed.py      Yahoo ticker news + market RSS tape
 backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
+backend/broker_import.py Parse read-only broker position CSV/TSV snapshots
 backend/llm_advice.py    OpenAI / Anthropic calls
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts

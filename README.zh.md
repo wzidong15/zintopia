@@ -56,7 +56,7 @@ chmod +x start.sh
 **Stock portfolio** 是本地纸上交易沙盒，只做 **美股与 ETF 正股**。不支持期权（看涨、看跌或价差）。不会把订单发到券商。常规交易时段内，成交与净值使用与研究界面相同的行情栈。纽交所现金时段关闭时（美国东部时间），净值与模拟成交按 Yahoo **盘前**（4:00–9:30）或 **盘后**（16:00–20:00）计价；隔夜与周末使用最近一次延长时段成交价。
 
 1. 在顶栏打开 **Stock portfolio**。
-2. 用名称和起始资金创建组合（例如 `100000`）。
+2. 用名称和起始资金创建 **纸面基金**（例如 `100000`），或在 **Imported snapshots** 下导入只读 CSV/TSV 快照。券商导出（Robinhood、IBKR、Fidelity、Schwab）和通用 `symbol,shares,avg_cost` 都可以，也可以粘贴。剩余现金可选。导入前选择收益怎么算：**导入时价格**（盈亏接近 0）或 **CSV 实际成本**。期权与加密货币行会跳过。这是一次性副本 — Zintopia 不会登录任何券商，也不能交易实盘。纸面基金与导入快照分开列出、分开排序。
 3. 按股数或金额下模拟 **买** / **卖** 订单，或挂上自动策略并打开 **Auto**。
 4. 查看净值、现金、未实现盈亏、最大回撤、净值图、持仓与成交记录。
 5. 在组合页使用 **Vibe 对话**。**Analyze fund** 会提交结构化点评；在输入框继续提问即同一会话追问（Yahoo 行情/新闻与日线技术分析，数据栈与 [Vibe-Trading MCP](https://github.com/HKUDS/Vibe-Trading) 相同）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。点击笔记中的代码，可填入模拟下单框。
@@ -146,6 +146,7 @@ cp .env.example .env
 | `POST /api/llm-advice/{symbol}/chat` | 同一 `conversation_id` 追问 |
 | `GET /api/portfolios` | 股票组合摘要（盯市） |
 | `POST /api/portfolios` | 创建组合 `{name, amount}` |
+| `POST /api/portfolios/import` | 从券商 CSV/TSV 创建导入快照（`file` 或 `csv_text`；`cost_basis=mark\|csv`；可选 `name`、`cash`） |
 | `GET /api/portfolios/{id}` | 持仓、成交、净值快照 |
 | `DELETE /api/portfolios/{id}` | 删除组合 |
 | `POST /api/portfolios/{id}/orders` | 模拟买卖（`shares` 或 `notional`） |
@@ -161,6 +162,7 @@ backend/newsfeed.py      Yahoo 个股新闻 + 市场 RSS 头条
 backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
+backend/broker_import.py 只读解析券商持仓 CSV/TSV 快照
 backend/llm_advice.py    OpenAI / Anthropic 调用
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
