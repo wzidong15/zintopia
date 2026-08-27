@@ -3,7 +3,11 @@ export type PortfolioStrategyKind =
   | "buy_hold"
   | "sma_cross"
   | "momentum"
-  | "rsi_reversion";
+  | "rsi_reversion"
+  | "trend_200"
+  | "dual_momentum"
+  | "sector_rot"
+  | "rsi_trend";
 
 export type PortfolioStrategy = {
   kind: PortfolioStrategyKind;
@@ -84,12 +88,47 @@ export type PortfolioSummary = {
   cost_basis?: PortfolioCostBasis | null;
 };
 
-export const STRATEGY_OPTIONS: { id: PortfolioStrategyKind; label: string; hint: string }[] = [
+export const STRATEGY_OPTIONS: {
+  id: PortfolioStrategyKind;
+  label: string;
+  hint: string;
+  usesSymbol?: boolean;
+}[] = [
   { id: "manual", label: "Manual", hint: "You place paper buy/sell orders in shares (no options)." },
   { id: "buy_hold", label: "Buy & hold", hint: "Automatically invest cash in one ticker and hold." },
+  {
+    id: "trend_200",
+    label: "200-day trend",
+    hint: "Long the ticker when price is above the 200-day SMA; otherwise cash. Classic time-series trend (Faber).",
+  },
+  {
+    id: "dual_momentum",
+    label: "Dual momentum",
+    hint: "Hold the stronger of your risk-on ticker vs EFA when 1/3/6-month momentum beats SHY and zero; otherwise SHY. Antonacci-style GEM.",
+  },
+  {
+    id: "sector_rot",
+    label: "Sector rotation",
+    hint: "Equal-weight the top 3 US sector ETFs (XLK, XLF, …) by 6-month return if that return is positive; otherwise cash.",
+    usesSymbol: false,
+  },
+  {
+    id: "rsi_trend",
+    label: "RSI + trend filter",
+    hint: "Buy ~25% cash when RSI < 30 and price is above SMA200; sell when RSI > 70 or the 200-day trend fails.",
+  },
   { id: "sma_cross", label: "SMA crossover", hint: "Buy when SMA20 > SMA50; sell when it crosses down." },
-  { id: "momentum", label: "Momentum", hint: "Rotate into the top 3 US gainers (equal weight)." },
-  { id: "rsi_reversion", label: "RSI mean reversion", hint: "Buy ~25% cash when RSI < 30; sell when RSI > 70." },
+  {
+    id: "momentum",
+    label: "Day-gainers",
+    hint: "Rotate into the top 3 US day-gainers, equal weight. Noisy vs dual momentum or sector rotation.",
+    usesSymbol: false,
+  },
+  {
+    id: "rsi_reversion",
+    label: "RSI mean reversion",
+    hint: "Buy ~25% cash when RSI < 30; sell when RSI > 70. No trend filter.",
+  },
 ];
 
 const SORT_KEY = "zintopia.portfolios.sort";

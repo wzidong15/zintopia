@@ -19,15 +19,17 @@ Local US-stock visualization app in this repo. Not OpenBB Workspace. Formerly Fi
 
 ## Data source priority
 
+Full inventory (URLs, keys, paid tiers): `docs/DATA_SOURCES.md`.
+
 Quotes (`/api/quote`, `/api/quotes`, `/api/indices`):
 
-1. **Polygon / Massive** last-trade snapshot — only if `POLYGON_API_KEY` or `MASSIVE_API_KEY` is set (realtime)
+1. **Polygon / Massive** last-trade snapshot — only if `POLYGON_API_KEY` or `MASSIVE_API_KEY` is set (and the plan allows snapshot)
 2. TradingView scanner via `tradingview-screener` (~15m delay unsigned)
-3. Yahoo `yfinance` fallback
+3. Yahoo `yfinance` fallback, then Stooq
 
-Charts, profile, news: Yahoo Finance. Daily TA rating: `tradingview-ta`. Movers: TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo `day_gainers` / `day_losers` / `most_actives`.
+Charts: Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429. Profile, news, options, filings: Yahoo. Daily TA: `tradingview-ta`. Movers: TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo `day_gainers` / `day_losers` / `most_actives`. Congress PTRs: House Clerk + Senate eFD. LLM: OpenAI and/or Anthropic API keys (ChatGPT Plus / Claude Pro do not count).
 
-Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay honest about delay.
+Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay honest about delay. ChatGPT/Claude/Yahoo Plus/TradingView website subscriptions are not API keys for this process.
 
 ## API (do not rename casually)
 
@@ -38,7 +40,7 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET /api/quotes?symbols=AAPL,MSFT` | Watchlist |
 | `GET /api/indices` | SPY QQQ DIA IWM VIX |
 | `GET /api/movers?kind=gainers\|losers\|active` | US stocks |
-| `GET /api/history/{symbol}?range=1d\|5d\|1mo\|3mo\|6mo\|1y\|5y` | OHLCV |
+| `GET /api/history/{symbol}` | OHLCV. Daily/weekly bars cache 15m; Yahoo 429 falls back to Polygon if a key is set, else HTTP 429 |
 | `GET /api/profile/{symbol}` | Yahoo fundamentals |
 | `GET /api/news/{symbol}` | Yahoo news |
 | `GET /api/ta/{symbol}` | TradingView summary |
@@ -48,7 +50,7 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET/POST /api/portfolios` | Stock paper funds (shares only, no options) |
 | `POST /api/portfolios/import` | Imported snapshot from a read-only broker CSV/TSV (`cost_basis=mark` import-time price, or `csv` actual basis; no login) |
 | `POST /api/portfolios/{id}/orders` | Simulated trades |
-| `PUT /api/portfolios/{id}/strategy` | Manual or auto quant strategy |
+| `PUT /api/portfolios/{id}/strategy` | Manual or auto quant strategy (`manual`, `buy_hold`, `trend_200`, `dual_momentum`, `sector_rot`, `rsi_trend`, `sma_cross`, `momentum`, `rsi_reversion`) |
 | `POST /api/portfolios/{id}/tick` | Mark-to-market / auto step |
 | `POST /api/portfolios/{id}/vibe` | Start Vibe-style paper-fund conversation (Yahoo + daily TA, then LLM) |
 | `POST /api/portfolios/{id}/vibe/chat` | Follow-up on the same `conversation_id` (prose, in-memory thread) |

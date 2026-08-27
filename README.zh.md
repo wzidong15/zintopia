@@ -67,9 +67,13 @@ chmod +x start.sh
 |---|---|
 | Manual | 自行下模拟买卖单（正股，无期权）。 |
 | Buy & hold | 把剩余现金买入一只代码并持有。 |
+| 200-day trend | 价格在 200 日均线上方时做多该代码，否则持现金（Faber 趋势）。 |
+| Dual momentum | 风险资产与 EFA 里 1/3/6 月动量更强且高于 SHY 与 0 时持有；否则持 SHY（Antonacci GEM）。 |
+| Sector rotation | 按 6 月收益等权持有美股行业 ETF 前 3（收益须为正）；否则现金。 |
+| RSI + trend filter | RSI < 30 且价格在 SMA200 上方时用约 25% 现金买入；RSI > 70 或跌破趋势则卖出。 |
 | SMA crossover | SMA20 > SMA50 时买入；死叉卖出。 |
-| Momentum | 等权轮动美股涨幅前 3。 |
-| RSI mean reversion | RSI < 30 时用约 25% 现金买入；RSI > 70 时卖出。 |
+| Day-gainers | 等权轮动美股当日涨幅前 3。比双动量 / 行业轮动更噪。 |
+| RSI mean reversion | RSI < 30 时用约 25% 现金买入；RSI > 70 时卖出。无趋势过滤。 |
 
 组合存在本地 `~/.zintopia/portfolios.json`（不进 git）。同一目录还有国会 PTR 缓存（`congress_ptr.json`）。可用 `ZINTOPIA_DATA_DIR` 覆盖。在界面删除组合即删除数据。重启应用不会清空模拟资金或成交。
 
@@ -106,19 +110,21 @@ cp .env.example .env
 
 ## 数据来源
 
-| 面板 | 来源 |
-|---|---|
-| 行情 / 指数 / 自选 | Polygon snapshot（有密钥时）→ TradingView scanner → yfinance download → Yahoo ticker → Stooq |
-| 图表 | Yahoo Finance `yf.download` |
-| 涨跌榜 | TradingView scanner，套餐允许时再试 Polygon 涨跌幅，再回退 Yahoo 涨幅 / 跌幅 / 最活跃 |
-| 日线技术分析 | tradingview-ta |
-| 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo Finance（`yfinance`） |
-| 市场新闻 | Yahoo Finance RSS（`/news/rssindex` 与 GSPC 头条）。Breaking 只看标题关键词（不看新旧）。Alert 为严重措辞启发式，不是新闻台判定 |
-| 参众两院 PTR 交易 | 官方 STOCK Act 申报：众议院书记官 `YYYYFD.zip` + PTR PDF；参议院 eFD 检索（`efdsearch.senate.gov`）。这些是 **交易**，不是实时持仓；申报人最多有 45 天披露期。缓存于 `~/.zintopia/congress_ptr.json`（后台刷新，默认回看 120 天） |
-| LLM 研究 / Vibe 对话 | 配置密钥后使用 OpenAI 或 Anthropic |
-| 模拟组合计价 / 成交 | 常规时段：与 `/api/quote` 相同行情栈。纽交所现金时段关闭时（东部时间）：Yahoo **盘前**（4:00–9:30）、**盘后**（16:00–20:00），或隔夜/周末最近一次延长时段成交价。SMA 策略使用 Yahoo `yf.download` 历史 |
+完整清单（URL、环境变量、各厂商 **付费档**）：[docs/DATA_SOURCES.zh.md](docs/DATA_SOURCES.zh.md) · [English](docs/DATA_SOURCES.md)。下表价格为 **2026 年 8 月** 标价，以官网为准。
 
-不要把未登录的 TradingView 或 Yahoo 报价当成交易所实时行情。
+| 面板 | 本应用实际调用 | 存在的付费产品（未必已接线） |
+|---|---|---|
+| 行情 / 指数 / 自选 | 有密钥则 Polygon snapshot → TradingView scanner → yfinance → Stooq | Massive 美股：Basic $0 → Starter $29（15 分钟 + snapshot）→ Developer $79 → Advanced $199（实时）。TV 网站付费套餐与交易所数据包 **不会** 改变我们未登录的 scanner |
+| 图表 / 纸上策略 | Yahoo `yf.download`；日/周线在 Yahoo 429 时回退 Polygon aggregates | Yahoo Finance Plus（网站）**不能** 解锁 `yfinance` |
+| 涨跌榜 / 筛选 / 搜索 | TradingView scanner，授权后再试 Polygon 涨跌幅，再 Yahoo `day_gainers` 等 | 同行情行的 TV / Polygon |
+| 日线技术分析 | `tradingview-ta` → `scanner.tradingview.com` | 无单独 TA 密钥 |
+| 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo（`yfinance`，`query1`/`query2.finance.yahoo.com`）。官方公开 API 已于 2017 关闭 | Plus 是消费者网站套餐，不是 API |
+| 市场新闻 | Yahoo RSS。Breaking 只看标题词。Alert 为严重措辞启发式 | Plus 付费新闻流不是这两条 RSS |
+| 参众两院 PTR | 众议院书记官 ZIP/PDF；参议院 eFD。是 **交易** 不是实时持仓，最多 45 天披露。缓存 `~/.zintopia/congress_ptr.json` | 官方免费；商业清洗源未用 |
+| LLM / Vibe | `api.openai.com` 与/或 `api.anthropic.com` | **按 token 的 API 账单**。ChatGPT Plus / Claude Pro **不含** 这些密钥 |
+| 图组件 | TradingView Lightweight Charts（画已拉到的 K 线） | TV Supercharts 订阅无关 |
+
+不要把未登录的 TradingView 或 Yahoo 报价当成交易所实时行情。免费 Polygon 常无法调 snapshot（`NOT_AUTHORIZED`），行情会自动回退。
 
 ## API
 
@@ -150,7 +156,7 @@ cp .env.example .env
 | `GET /api/portfolios/{id}` | 持仓、成交、净值快照 |
 | `DELETE /api/portfolios/{id}` | 删除组合 |
 | `POST /api/portfolios/{id}/orders` | 模拟买卖（`shares` 或 `notional`） |
-| `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `sma_cross` / `momentum` / `rsi_reversion` |
+| `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `trend_200` / `dual_momentum` / `sector_rot` / `rsi_trend` / `sma_cross` / `momentum` / `rsi_reversion` |
 | `POST /api/portfolios/{id}/vibe` | 开始 Vibe 模拟组合对话（Yahoo + 日线技术分析，再 LLM） |
 | `POST /api/portfolios/{id}/vibe/chat` | 同一 `conversation_id` 追问 |
 
@@ -168,6 +174,7 @@ backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 开发启动脚本（若存在则加载 .env）
 .env.example             密钥占位 — 本地复制为 .env
+docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
 ~/.zintopia/             本地模拟组合 + PTR 缓存（不进 git）
 ```
 

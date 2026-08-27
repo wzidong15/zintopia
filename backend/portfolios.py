@@ -19,13 +19,38 @@ from broker_import import parse_broker_csv
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 LEGACY_DATA_FILE = DATA_DIR / "portfolios.json"
+SECTOR_ETFS = (
+    "XLK",
+    "XLF",
+    "XLE",
+    "XLV",
+    "XLI",
+    "XLY",
+    "XLP",
+    "XLU",
+    "XLB",
+    "XLRE",
+    "XLC",
+)
+DUAL_DEFENSIVE = "SHY"
+DUAL_INTL = "EFA"
 MAX_PORTFOLIOS = 20
 MAX_TRADES = 250
 MAX_SNAPSHOTS = 600
 _stop = threading.Event()
 _scheduler: threading.Thread | None = None
 
-Kind = Literal["manual", "buy_hold", "sma_cross", "momentum", "rsi_reversion"]
+Kind = Literal[
+    "manual",
+    "buy_hold",
+    "sma_cross",
+    "momentum",
+    "rsi_reversion",
+    "trend_200",
+    "dual_momentum",
+    "sector_rot",
+    "rsi_trend",
+]
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 _lock = threading.Lock()
@@ -316,6 +341,133 @@ def _sma(closes: list[float], n: int) -> float | None:
     return sum(closes[-n:]) / n
 
 
+def _rsi(closes: list[float], n: int = 14) -> float | None:
+    """Wilder RSI. Needs n+1 closes."""
+    if len(closes) < n + 1:
+        return None
+    gains = [max(closes[i] - closes[i - 1], 0.0) for i in range(1, len(closes))]
+    losses = [max(closes[i - 1] - closes[i], 0.0) for i in range(1, len(closes))]
+    avg_gain = sum(gains[:n]) / n
+    avg_loss = sum(losses[:n]) / n
+    for g, loss in zip(gains[n:], losses[n:]):
+        avg_gain = (avg_gain * (n - 1) + g) / n
+        avg_loss = (avg_loss * (n - 1) + loss) / n
+    if avg_loss <= 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+
+_closes_cache: dict[tuple[str, str], tuple[float, list[float]]] = {}
+_CLOSES_TTL_SEC = 15 * 60
+
+
+def _daily_closes(symbol: str, rng: str = "6mo") -> list[float]:
+    key = (str(symbol).upper(), rng)
+    now = time.time()
+    hit = _closes_cache.get(key)
+    if hit and now - hit[0] < _CLOSES_TTL_SEC:
+        return list(hit[1])
+    if _history is None:
+        return []
+    try:
+        hist = _history(symbol, rng)
+    except Exception:
+        return []
+    closes = [float(b["close"]) for b in (hist.get("bars") or []) if b.get("close") is not None]
+    if closes:
+        _closes_cache[key] = (now, closes)
+    return closes
+
+
+def _roc(closes: list[float], n: int) -> float | None:
+    if len(closes) <= n:
+        return None
+    base = closes[-1 - n]
+    if not base:
+        return None
+    return closes[-1] / base - 1.0
+
+
+def _accel_mom(closes: list[float]) -> float | None:
+    """Average of 1m / 3m / 6m returns (accelerated dual momentum)."""
+    parts = [x for x in (_roc(closes, 21), _roc(closes, 63), _roc(closes, 126)) if x is not None]
+    if not parts:
+        return None
+    return sum(parts) / len(parts)
+
+
+def _long_symbols(p: dict[str, Any]) -> list[str]:
+    return [
+        str(s).upper()
+        for s, h in (p.get("holdings") or {}).items()
+        if float((h or {}).get("shares") or 0) > 1e-8
+    ]
+
+
+def _ensure_px(symbol: str, prices: dict[str, float]) -> float | None:
+    px = prices.get(symbol)
+    if isinstance(px, (int, float)) and px > 0:
+        return float(px)
+    if _quote is not None:
+        try:
+            q = _quote(symbol) or {}
+            cand = q.get("price")
+            if isinstance(cand, (int, float)) and cand > 0:
+                prices[symbol] = float(cand)
+                return float(cand)
+        except Exception:
+            pass
+    closes = _daily_closes(symbol, "3mo")
+    if closes:
+        prices[symbol] = closes[-1]
+        return closes[-1]
+    return None
+
+
+def _rotate_to(p: dict[str, Any], prices: dict[str, float], picks: list[str], source: str) -> str:
+    """Hold exactly `picks` (equal cash into names not already held). Skip if the set matches."""
+    picks = [s.upper() for s in dict.fromkeys(picks) if s]
+    held = _long_symbols(p)
+    if set(held) == set(picks):
+        return "holding " + ", ".join(picks) if picks else "cash"
+    sold: list[str] = []
+    for sym in held:
+        if sym in picks:
+            continue
+        h = (p.get("holdings") or {}).get(sym) or {}
+        sh = float(h.get("shares") or 0)
+        px = _ensure_px(sym, prices) or float(h.get("last_price") or 0)
+        if px > 0 and sh > 0:
+            _fill_order(p, sym, "sell", sh, px, source)
+            sold.append(sym)
+    if not picks:
+        return "sold to cash" + (f" ({', '.join(sold)})" if sold else "")
+    missing = [s for s in picks if s not in _long_symbols(p)]
+    if not missing:
+        return "holding " + ", ".join(picks)
+    cash = float(p.get("cash") or 0)
+    if cash < 10:
+        return f"want {', '.join(picks)}; little cash"
+    slice_amt = cash / len(missing)
+    bought: list[str] = []
+    for sym in missing:
+        px = _ensure_px(sym, prices)
+        if not px:
+            continue
+        shares = _shares((slice_amt * 0.99) / px)
+        if shares <= 0:
+            continue
+        _fill_order(p, sym, "buy", shares, px, source)
+        bought.append(sym)
+    bits: list[str] = []
+    if sold:
+        bits.append("sold " + ", ".join(sold))
+    if bought:
+        bits.append("bought " + ", ".join(bought))
+    return ("; ".join(bits) if bits else "no trades") + " → " + ", ".join(picks)
+
+
 def _run_strategy(p: dict[str, Any], prices: dict[str, float], *, force: bool = False) -> str:
     st = p.get("strategy") or {}
     kind = st.get("kind") or "manual"
@@ -335,6 +487,14 @@ def _run_strategy(p: dict[str, Any], prices: dict[str, float], *, force: bool = 
             note = _strat_momentum(p, prices)
         elif kind == "rsi_reversion":
             note = _strat_rsi(p, prices, str(st.get("symbol") or "SPY").upper())
+        elif kind == "trend_200":
+            note = _strat_trend_200(p, prices, str(st.get("symbol") or "SPY").upper())
+        elif kind == "dual_momentum":
+            note = _strat_dual_momentum(p, prices, str(st.get("symbol") or "SPY").upper())
+        elif kind == "sector_rot":
+            note = _strat_sector_rot(p, prices)
+        elif kind == "rsi_trend":
+            note = _strat_rsi_trend(p, prices, str(st.get("symbol") or "SPY").upper())
     except HTTPException as e:
         note = str(e.detail)
         p["last_error"] = note
@@ -438,17 +598,28 @@ def _strat_momentum(p: dict[str, Any], prices: dict[str, float]) -> str:
 
 
 def _strat_rsi(p: dict[str, Any], prices: dict[str, float], symbol: str) -> str:
-    if _quote is None:
-        return "quote unavailable"
-    q = _quote(symbol)
-    px = q.get("price")
+    q: dict[str, Any] = {}
+    if _quote is not None:
+        try:
+            q = _quote(symbol) or {}
+        except Exception:
+            q = {}
+    px = prices.get(symbol)
+    cand = q.get("price")
+    if isinstance(cand, (int, float)) and cand > 0:
+        px = float(cand)
+        prices[symbol] = px
     rsi = q.get("rsi")
-    if isinstance(px, (int, float)) and px > 0:
-        prices[symbol] = float(px)
-    else:
+    if not isinstance(rsi, (int, float)):
+        closes = _daily_closes(symbol)
+        rsi = _rsi(closes)
+        if (px is None or px <= 0) and closes:
+            px = closes[-1]
+            prices[symbol] = px
+    if not isinstance(px, (int, float)) or px <= 0:
         return f"no price for {symbol}"
     if not isinstance(rsi, (int, float)):
-        return "no RSI on quote"
+        return "not enough bars for RSI"
     held = float(((p.get("holdings") or {}).get(symbol) or {}).get("shares") or 0)
     if rsi < 30 and held <= 0:
         cash = float(p.get("cash") or 0)
@@ -463,11 +634,107 @@ def _strat_rsi(p: dict[str, Any], prices: dict[str, float], symbol: str) -> str:
     return f"RSI {rsi:.1f}, hold"
 
 
+def _strat_trend_200(p: dict[str, Any], prices: dict[str, float], symbol: str) -> str:
+    """Faber-style: long the ticker when price > SMA200, else cash."""
+    closes = _daily_closes(symbol, "2y")
+    sma = _sma(closes, 200)
+    if sma is None:
+        return "not enough bars for SMA200"
+    px = _ensure_px(symbol, prices) or closes[-1]
+    prices[symbol] = px
+    if px >= sma:
+        return _rotate_to(p, prices, [symbol], "trend_200") + f" (px {px:.2f} ≥ SMA200 {sma:.2f})"
+    return _rotate_to(p, prices, [], "trend_200") + f" (px {px:.2f} < SMA200 {sma:.2f})"
+
+
+def _strat_dual_momentum(p: dict[str, Any], prices: dict[str, float], risk_on: str) -> str:
+    """Antonacci / accelerated dual momentum: best of risk-on vs EFA if score beats SHY and 0."""
+    risk_on = risk_on or "SPY"
+    scores: dict[str, float] = {}
+    for s in dict.fromkeys([risk_on, DUAL_INTL, DUAL_DEFENSIVE]):
+        sc = _accel_mom(_daily_closes(s, "1y"))
+        if sc is None:
+            continue
+        scores[s] = sc
+        _ensure_px(s, prices)
+    if not scores:
+        return "not enough history for dual momentum"
+    equities = [(s, scores[s]) for s in (risk_on, DUAL_INTL) if s in scores]
+    equities.sort(key=lambda x: -x[1])
+    shy = scores.get(DUAL_DEFENSIVE)
+    pick: str | None = None
+    if equities and equities[0][1] > 0 and (shy is None or equities[0][1] > shy):
+        pick = equities[0][0]
+    elif DUAL_DEFENSIVE in scores:
+        pick = DUAL_DEFENSIVE
+    if pick is None:
+        return "not enough history for dual momentum"
+    body = _rotate_to(p, prices, [pick], "dual_momentum")
+    detail = ", ".join(f"{s} {v * 100:.1f}%" for s, v in scores.items())
+    return f"{body} (1/3/6m {detail})" if detail else body
+
+
+def _strat_sector_rot(p: dict[str, Any], prices: dict[str, float]) -> str:
+    """Hold the top 3 US sector ETFs by 6-month return if that return is positive."""
+    ranked: list[tuple[str, float]] = []
+    for s in SECTOR_ETFS:
+        r = _roc(_daily_closes(s, "1y"), 126)
+        if r is None:
+            continue
+        _ensure_px(s, prices)
+        ranked.append((s, r))
+    ranked.sort(key=lambda x: -x[1])
+    if not ranked:
+        return "not enough history for sector rotation"
+    picks = [s for s, r in ranked if r > 0][:3]
+    if not picks:
+        body = _rotate_to(p, prices, [], "sector_rot")
+        return f"{body} (no sector with +6m return)"
+    body = _rotate_to(p, prices, picks, "sector_rot")
+    top = ", ".join(f"{s} {r * 100:.1f}%" for s, r in ranked[:3])
+    return f"{body} | 6m {top}"
+
+
+def _strat_rsi_trend(p: dict[str, Any], prices: dict[str, float], symbol: str) -> str:
+    """Mean-revert only in an uptrend: buy RSI<30 if px>SMA200; sell if RSI>70 or trend fails."""
+    closes = _daily_closes(symbol, "2y")
+    rsi = _rsi(closes)
+    sma = _sma(closes, 200)
+    px = _ensure_px(symbol, prices)
+    if px is None and closes:
+        px = closes[-1]
+        prices[symbol] = px
+    if rsi is None or sma is None or not isinstance(px, (int, float)) or px <= 0:
+        return "not enough bars for RSI+trend"
+    prices[symbol] = px
+    held = float(((p.get("holdings") or {}).get(symbol) or {}).get("shares") or 0)
+    uptrend = px >= sma
+    if rsi < 30 and uptrend and held <= 0:
+        cash = float(p.get("cash") or 0)
+        shares = _shares((cash * 0.25) / float(px))
+        if shares <= 0:
+            return f"RSI {rsi:.1f} oversold in uptrend, no cash"
+        _fill_order(p, symbol, "buy", shares, float(px), "rsi_trend")
+        return f"RSI {rsi:.1f} + uptrend: bought {shares} {symbol}"
+    if held > 0 and (rsi > 70 or not uptrend):
+        _fill_order(p, symbol, "sell", held, float(px), "rsi_trend")
+        why = "overbought" if rsi > 70 else "lost SMA200"
+        return f"RSI {rsi:.1f} {why}: sold {held} {symbol}"
+    side = "uptrend" if uptrend else "downtrend"
+    return f"RSI {rsi:.1f} {side} SMA200 {sma:.2f}, hold"
+
+
 def _symbols(p: dict[str, Any]) -> list[str]:
     symbols = list((p.get("holdings") or {}).keys())
-    st_sym = ((p.get("strategy") or {}).get("symbol") or "").upper()
+    st = p.get("strategy") or {}
+    kind = st.get("kind")
+    st_sym = str(st.get("symbol") or "").upper()
     if st_sym:
         symbols.append(st_sym)
+    if kind == "sector_rot":
+        symbols.extend(SECTOR_ETFS)
+    elif kind == "dual_momentum":
+        symbols.extend([st_sym or "SPY", DUAL_INTL, DUAL_DEFENSIVE])
     return symbols
 
 
@@ -871,10 +1138,7 @@ def run_due_auto_strategies() -> int:
             last = int(st.get("last_run_at") or 0)
             if last and now - last < interval:
                 continue
-            symbols = list((p.get("holdings") or {}).keys())
-            if st.get("symbol"):
-                symbols.append(str(st["symbol"]).upper())
-            prices = _price_map(symbols)
+            prices = _price_map(_symbols(p))
             _run_strategy(p, prices, force=True)
             _snapshot(p, _nav(p, prices), force=True)
             p["updated_at"] = now
@@ -890,10 +1154,7 @@ def tick_portfolio(pid: str, force: bool = False):
         store = _load()
         p = _find(store, pid)
         st = p.get("strategy") or {}
-        symbols = list((p.get("holdings") or {}).keys())
-        if st.get("symbol"):
-            symbols.append(str(st["symbol"]).upper())
-        prices = _price_map(symbols)
+        prices = _price_map(_symbols(p))
         note = None
         kind = st.get("kind")
         if kind not in (None, "manual") and (force or st.get("auto")):

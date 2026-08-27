@@ -16,7 +16,7 @@ import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any, Literal
@@ -137,10 +137,18 @@ RANGE_TO_YF = {
     "3mo": ("3mo", "1d"),
     "6mo": ("6mo", "1d"),
     "1y": ("1y", "1d"),
+    "2y": ("2y", "1d"),
     "5y": ("5y", "1wk"),
 }
 
 _cache: dict[str, tuple[float, Any]] = {}
+_yf_gate = threading.Lock()
+_yf_next_ok = 0.0
+_YF_GAP_SEC = 0.45
+
+
+class YahooRateLimited(RuntimeError):
+    """Yahoo Finance rejected the request (HTTP 429 / YFRateLimitError)."""
 
 
 def _env(*names: str, default: str = "") -> str:
@@ -331,13 +339,56 @@ def _yf_ticker(symbol: str) -> yf.Ticker:
     return yf.Ticker(symbol, session=sess)
 
 
+def _is_rate_limit_text(text: str) -> bool:
+    t = text.lower()
+    return "rate limit" in t or "too many requests" in t or "yfratelimiterror" in t
+
+
+def _yf_shared_errors() -> dict[str, str]:
+    try:
+        from yfinance import shared
+
+        return {str(k): str(v) for k, v in (getattr(shared, "_ERRORS", None) or {}).items()}
+    except Exception:
+        return {}
+
+
 def _yf_download(*args, **kwargs):
+    """Serialize Yahoo downloads and retry once on YFRateLimitError."""
+    global _yf_next_ok
     sess = _yf_session()
     if sess is not None:
         kwargs.setdefault("session", sess)
     kwargs.setdefault("progress", False)
     kwargs.setdefault("threads", False)
-    return yf.download(*args, **kwargs)
+    last: Any = None
+    with _yf_gate:
+        for attempt in range(2):
+            wait = _yf_next_ok - time.time()
+            if wait > 0:
+                time.sleep(min(wait, 8.0))
+            try:
+                df = yf.download(*args, **kwargs)
+            except Exception as e:
+                _yf_next_ok = time.time() + _YF_GAP_SEC
+                if _is_rate_limit_text(f"{type(e).__name__} {e}") and attempt == 0:
+                    time.sleep(2.5)
+                    continue
+                if _is_rate_limit_text(f"{type(e).__name__} {e}"):
+                    raise YahooRateLimited(str(e) or "Too Many Requests") from e
+                raise
+            _yf_next_ok = time.time() + _YF_GAP_SEC
+            last = df
+            if df is not None and not getattr(df, "empty", True):
+                return df
+            errs = _yf_shared_errors()
+            if any(_is_rate_limit_text(v) for v in errs.values()):
+                if attempt == 0:
+                    time.sleep(2.5)
+                    continue
+                raise YahooRateLimited("Too Many Requests. Rate limited. Try after a while.")
+            return df
+    return last
 
 
 def _close_http_pools() -> None:
@@ -1219,6 +1270,113 @@ def _yfinance_history_bars(symbol: str, range: str) -> dict[str, Any]:
     }
 
 
+def _polygon_history_bars(symbol: str, range: str) -> dict[str, Any]:
+    """Daily/weekly OHLCV from Polygon when Yahoo is rate-limited."""
+    if not POLYGON_KEY:
+        raise RuntimeError("no polygon key")
+    if range not in ("3mo", "6mo", "1y", "2y", "5y"):
+        raise RuntimeError("polygon history is daily/weekly only")
+    yf_sym = _yahoo_ticker_symbol(symbol)
+    if yf_sym in ("VIX", "^VIX"):
+        raise RuntimeError("VIX is not a Polygon stock ticker")
+    timespan = "week" if range == "5y" else "day"
+    lookback = {"3mo": 120, "6mo": 220, "1y": 420, "2y": 800, "5y": 1900}[range]
+    end = datetime.now(ZoneInfo("America/New_York")).date()
+    start = end - timedelta(days=lookback)
+    url = f"{POLYGON_BASE}/v2/aggs/ticker/{yf_sym}/range/1/{timespan}/{start.isoformat()}/{end.isoformat()}"
+    body = _http_json(
+        "GET",
+        url,
+        params={"adjusted": "true", "sort": "asc", "limit": 50000, "apiKey": POLYGON_KEY},
+        timeout=20,
+    )
+    bars: list[dict[str, Any]] = []
+    for r in body.get("results") or []:
+        close = _clean(r.get("c"))
+        if close is None:
+            continue
+        ms = r.get("t")
+        if not isinstance(ms, (int, float)):
+            continue
+        bars.append(
+            {
+                "time": int(ms) // 1000,
+                "open": _clean(r.get("o")),
+                "high": _clean(r.get("h")),
+                "low": _clean(r.get("l")),
+                "close": float(close),
+                "volume": _clean(r.get("v")),
+                "session": "rth",
+            }
+        )
+    if not bars:
+        raise RuntimeError(f"No Polygon history for {symbol}")
+    _period, interval = RANGE_TO_YF[range]
+    return {
+        "symbol": yf_sym,
+        "interval": interval,
+        "range": range,
+        "source": "polygon",
+        "prepost": False,
+        "session": _us_equity_session(),
+        "bars": bars,
+    }
+
+
+def _history_cache_ttl(range: str) -> float:
+    fresh = _chart_cache_ttl()
+    if range in ("1d", "5d"):
+        return fresh
+    if range == "1mo":
+        return max(fresh, _chart_refresh_sec() * 0.8)
+    return 15 * 60.0
+
+
+def _history_cache_key(symbol: str, range: str) -> str:
+    yf_sym = symbol.strip().upper().split(":")[-1]
+    cache_sym = "^VIX" if yf_sym == "VIX" else yf_sym
+    session = _us_equity_session()
+    tag = "ext" if session != "rth" and range in ("1d", "5d", "1mo") else "rth"
+    return f"hist:{cache_sym}:{range}:{tag}"
+
+
+def _load_history_bars(symbol: str, range: str) -> dict[str, Any]:
+    try:
+        return _yfinance_history_bars(symbol, range)
+    except YahooRateLimited:
+        if POLYGON_KEY:
+            try:
+                return _polygon_history_bars(symbol, range)
+            except Exception:
+                pass
+        raise
+    except RuntimeError:
+        if POLYGON_KEY:
+            try:
+                return _polygon_history_bars(symbol, range)
+            except Exception:
+                pass
+        raise
+
+
+def _history_bars_cached(symbol: str, range: str) -> dict[str, Any]:
+    """Stable cache (no refresh-bucket key) so daily bars are not re-downloaded every chart poll."""
+    key = _history_cache_key(symbol, range)
+    ttl = _history_cache_ttl(range)
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    try:
+        value = _load_history_bars(symbol, range)
+        _cache[key] = (now, value)
+        return value
+    except Exception:
+        if hit:
+            return hit[1]
+        raise
+
+
 def _yahoo_download_close(symbol: str) -> dict[str, Any]:
     ticker_sym = _yahoo_ticker_symbol(symbol)
     for period in ("5d", "1mo", "3mo", "6mo", "1y", "max"):
@@ -1745,22 +1903,15 @@ def search(q: str, limit: int = 12):
 def history(symbol: str, range: str = "6mo"):
     if range not in RANGE_TO_YF:
         raise HTTPException(400, f"range must be one of {list(RANGE_TO_YF)}")
-    yf_sym = symbol.strip().upper().split(":")[-1]
-    cache_sym = "^VIX" if yf_sym == "VIX" else yf_sym
-
-    def fetch():
-        return _yfinance_history_bars(symbol, range)
-
-    fresh = _chart_cache_ttl()
-    session = _us_equity_session()
-    ttl = {"1d": fresh, "5d": fresh, "1mo": max(fresh, _chart_refresh_sec() * 0.8)}.get(
-        range, max(15.0, _chart_refresh_sec())
-    )
     try:
-        tag = "ext" if session != "rth" and range in ("1d", "5d", "1mo") else "rth"
-        return _cached(f"hist:{cache_sym}:{range}:{tag}:{_refresh_bucket()}", ttl, fetch)
+        return _history_bars_cached(symbol, range)
     except HTTPException:
         raise
+    except YahooRateLimited as e:
+        raise HTTPException(
+            429,
+            "Yahoo rate limited charts. Wait a minute, or use a Polygon key for daily bars.",
+        ) from e
     except Exception as e:
         raise HTTPException(502, f"History failed: {e}") from e
 
@@ -2617,7 +2768,7 @@ def _session_quotes(symbols: list[str]) -> list[dict[str, Any]]:
 portfolio_mod.configure(
     quote=_session_quote,
     quotes=_session_quotes,
-    history=_yfinance_history_bars,
+    history=_history_bars_cached,
     movers=_fetch_movers_items,
     session=_us_equity_session,
     extended_marks=_yahoo_extended_marks,

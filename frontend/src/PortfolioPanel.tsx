@@ -375,6 +375,7 @@ export default function PortfolioPanel({
   };
 
   const hint = STRATEGY_OPTIONS.find((s) => s.id === stratKind)?.hint;
+  const usesSymbol = STRATEGY_OPTIONS.find((s) => s.id === stratKind)?.usesSymbol !== false;
   const paperFunds = useMemo(
     () => sortPortfolios(items.filter((p) => !isImportedPortfolio(p)), fundSort),
     [items, fundSort],
@@ -798,9 +799,9 @@ export default function PortfolioPanel({
             </select>
           </label>
           {hint && <div className="muted pf-hint">{hint}</div>}
-          {stratKind !== "momentum" && (
+          {usesSymbol && stratKind !== "manual" && (
             <div className="pf-field">
-              Symbol
+              {stratKind === "dual_momentum" ? "Risk-on ticker" : "Symbol"}
               <SymbolSearch value={stratSym} onChange={setStratSym} />
             </div>
           )}

@@ -67,9 +67,13 @@ Performance (NAV chart and marked-to-market P/L) refreshes every 30 seconds (`ZI
 |---|---|
 | Manual | You place paper buy/sell orders in shares (no options). |
 | Buy & hold | Invests remaining cash in one ticker and holds. |
+| 200-day trend | Long the ticker when price is above the 200-day SMA; cash otherwise (Faber-style trend). |
+| Dual momentum | Hold the stronger of your risk-on ticker vs EFA when 1/3/6-month momentum beats SHY and zero; otherwise SHY (Antonacci GEM). |
+| Sector rotation | Equal-weight the top 3 US sector ETFs by 6-month return if that return is positive; otherwise cash. |
+| RSI + trend filter | Buy ~25% cash when RSI < 30 and price is above SMA200; sell when RSI > 70 or the trend fails. |
 | SMA crossover | Buys when SMA20 > SMA50; sells on a cross down. |
-| Momentum | Rotates into the top 3 US gainers, equal weight. |
-| RSI mean reversion | Buys ~25% of cash when RSI < 30; sells when RSI > 70. |
+| Day-gainers | Rotates into the top 3 US day-gainers, equal weight. Noisy compared with dual momentum or sector rotation. |
+| RSI mean reversion | Buys ~25% of cash when RSI < 30; sells when RSI > 70. No trend filter. |
 
 Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The same directory holds the Congress PTR cache (`congress_ptr.json`). Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
 
@@ -106,19 +110,21 @@ A free Polygon plan may still reject some snapshot endpoints (`NOT_AUTHORIZED`).
 
 ## Data sources
 
-| Panel | Source |
-|---|---|
-| Quotes / indices / watchlist | Polygon snapshot (if keyed) → TradingView scanner → yfinance download → Yahoo ticker → Stooq |
-| Charts | Yahoo Finance `yf.download` |
-| Movers | TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo day gainers / losers / most actives |
-| Daily TA | tradingview-ta |
-| Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance`) |
-| Market news | Yahoo Finance RSS (`/news/rssindex` and GSPC headlines). Breaking is title-keyword only (not recency). Alert tags are a severe-phrase heuristic, not a news desk |
-| Senate / House PTR trades | Official STOCK Act filings: House Clerk `YYYYFD.zip` + PTR PDFs; Senate eFD search (`efdsearch.senate.gov`). These are **trades**, not live holdings; filers have up to 45 days to disclose. Cached in `~/.zintopia/congress_ptr.json` (refreshed in the background, default 120-day lookback) |
-| LLM research / Vibe dialogs | OpenAI or Anthropic when a key is set |
-| Paper stock-portfolio marks / fills | Regular hours: same quote stack as `/api/quote`. When the NYSE cash session is closed (Eastern time): Yahoo **pre-market** (4:00–9:30), **after hours** (16:00–20:00), or last extended print overnight/weekend. SMA strategies use Yahoo `yf.download` history |
+Full inventory (URLs, env keys, and **paid/subscription tiers** for each vendor): [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md) · [中文](docs/DATA_SOURCES.zh.md). Prices below are **August 2026 list prices**; confirm on the vendor site.
 
-Do not treat unsigned TradingView or Yahoo prints as exchange-realtime.
+| Panel | What this app calls | Paid products that exist (not all are wired) |
+|---|---|---|
+| Quotes / indices / watchlist | Polygon snapshot (if keyed) → TradingView scanner → yfinance → Stooq | Massive stocks: Basic $0 → Starter $29 (15m + snapshot) → Developer $79 → Advanced $199 (realtime). TV website Essential–Ultimate and exchange data packages do **not** change our unsigned scanner. |
+| Charts / paper strategies | Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429 | Yahoo Finance Plus (Bronze/Silver/Gold, website only) does **not** unlock `yfinance`. Polygon history needs a plan that allows aggregates. |
+| Movers / screener / search | TradingView scanner, then Polygon gainers/losers if authorized, then Yahoo `day_gainers` / `day_losers` / `most_actives` | Same TV + Polygon rows as quotes |
+| Daily TA | `tradingview-ta` → `scanner.tradingview.com` | Same unsigned TV scanner; no TA API key |
+| Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance` on `query1`/`query2.finance.yahoo.com`). Official Yahoo public API was retired in 2017 | Yahoo Plus is a consumer site plan, not an API. Licensed vendors (Finnhub, Tiingo, …) are not used |
+| Market news | Yahoo RSS (`/news/rssindex` and GSPC headlines). Breaking is title-keyword only. Alert is a severe-phrase heuristic | Plus premium newsfeed is not these RSS URLs |
+| Senate / House PTR trades | Official STOCK Act: House Clerk `YYYYFD.zip` + PTR PDFs; Senate eFD (`efdsearch.senate.gov`). **Trades**, not live holdings; up to 45 days to file. Cache `~/.zintopia/congress_ptr.json` | Official feeds are free. Paid aggregators are not used |
+| LLM research / Vibe | `api.openai.com/v1/chat/completions` and/or `api.anthropic.com/v1/messages` | **API token billing** only. ChatGPT Plus / Claude Pro do **not** include these keys |
+| Chart widget | TradingView Lightweight Charts (draws bars we already fetched) | TV Supercharts subscription is unrelated |
+
+Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygon key on a free plan often cannot call snapshot (`NOT_AUTHORIZED`); quotes then fall back automatically.
 
 ## API
 
@@ -150,7 +156,7 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime.
 | `GET /api/portfolios/{id}` | Holdings, trades, NAV snapshots |
 | `DELETE /api/portfolios/{id}` | Delete fund |
 | `POST /api/portfolios/{id}/orders` | Paper buy/sell (`shares` or `notional`) |
-| `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `sma_cross` / `momentum` / `rsi_reversion` |
+| `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `trend_200` / `dual_momentum` / `sector_rot` / `rsi_trend` / `sma_cross` / `momentum` / `rsi_reversion` |
 | `POST /api/portfolios/{id}/vibe` | Start Vibe paper-fund conversation (Yahoo + daily TA, then LLM) |
 | `POST /api/portfolios/{id}/vibe/chat` | Follow-up on the same `conversation_id` |
 
@@ -168,6 +174,7 @@ backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 Dev launcher (loads .env if present)
 .env.example             Key placeholders — copy to .env locally
+docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
 ~/.zintopia/             Local paper funds + PTR cache (not in git)
 ```
 
