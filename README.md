@@ -49,6 +49,22 @@ chmod +x start.sh
 
 `start.sh` loads `.env` if present, creates `backend/.venv`, installs Python and npm deps, starts FastAPI on port 8000 (`--host ::`), then Vite on 5173 (Vite proxies `/api` to the backend).
 
+### Docker
+
+One container serves the UI and API on port 8000. Paper funds live in a named volume (`ZINTOPIA_DATA_DIR=/data`). Secrets come from the repo `.env` (Compose interpolates it; it is not copied into the image).
+
+```bash
+cp .env.example .env   # fill keys you use
+docker compose up --build
+```
+
+| | URL |
+|---|---|
+| UI | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
+
+`docker compose down` stops it. `docker compose down -v` also deletes paper-fund data in the volume. Keep using `./start.sh` for local Vite hot reload (UI on 5173).
+
 On macOS, `start.sh` sets `ZINTOPIA_BIND_INTERFACE=en0` so outbound HTTPS can bind to Wi-Fi when automatic source-address selection fails (`Errno 49` / “Can't assign requested address”). Override with `ZINTOPIA_BIND_INTERFACE=` or `ZINTOPIA_BIND_IP=`. `FINTOPIA_*` and `UTOPIA_*` names still work as aliases.
 
 ## Stock portfolio simulation
@@ -173,6 +189,8 @@ backend/llm_advice.py    OpenAI / Anthropic calls
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 Dev launcher (loads .env if present)
+Dockerfile               Multi-stage image (Vite build + FastAPI)
+docker-compose.yml       UI + API on port 8000, paper funds in a volume
 .env.example             Key placeholders — copy to .env locally
 docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
 ~/.zintopia/             Local paper funds + PTR cache (not in git)

@@ -1,0 +1,13 @@
+.git
+.cursor
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/*.tsbuildinfo
+frontend/node_modules
+frontend/dist
+backend/data
+.env
+.env.*
+!.env.example

@@ -49,6 +49,22 @@ chmod +x start.sh
 
 `start.sh` 若存在会加载 `.env`，创建 `backend/.venv`，安装 Python 与 npm 依赖，在 8000 端口启动 FastAPI（`--host ::`），再在 5173 启动 Vite（Vite 把 `/api` 代理到后端）。
 
+### Docker
+
+一个容器同时提供界面和 API，端口 8000。模拟组合存在 named volume（`ZINTOPIA_DATA_DIR=/data`）。密钥来自仓库根目录 `.env`（Compose 做变量插值，不会打进镜像）。
+
+```bash
+cp .env.example .env   # 填入你要用的密钥
+docker compose up --build
+```
+
+| | 地址 |
+|---|---|
+| 界面 | http://localhost:8000 |
+| API 文档 | http://localhost:8000/docs |
+
+`docker compose down` 停止。`docker compose down -v` 还会删掉 volume 里的模拟组合。本地热更新仍用 `./start.sh`（界面在 5173）。
+
 在 macOS 上，`start.sh` 会设置 `ZINTOPIA_BIND_INTERFACE=en0`，以便自动源地址选择失败时（`Errno 49` / “Can't assign requested address”）出站 HTTPS 绑定到 Wi-Fi。可用 `ZINTOPIA_BIND_INTERFACE=` 或 `ZINTOPIA_BIND_IP=` 覆盖。`FINTOPIA_*` 与 `UTOPIA_*` 名称仍可作为别名。
 
 ## 股票组合模拟
@@ -173,6 +189,8 @@ backend/llm_advice.py    OpenAI / Anthropic 调用
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 开发启动脚本（若存在则加载 .env）
+Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
+docker-compose.yml       界面与 API 在 8000 端口，模拟组合在 volume
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
 ~/.zintopia/             本地模拟组合 + PTR 缓存（不进 git）

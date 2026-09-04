@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as dt_time, timedelta
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
@@ -2847,3 +2848,17 @@ def vibe_portfolio_chat(pid: str, body: LlmChatBody):
         raise
     except Exception as e:
         raise HTTPException(502, f"Vibe follow-up failed: {e}") from e
+
+
+def _mount_ui() -> None:
+    """Serve the Vite build when ZINTOPIA_STATIC_DIR is set (Docker). Leave unset for ./start.sh."""
+    raw = (os.environ.get("ZINTOPIA_STATIC_DIR") or "").strip()
+    root = Path(raw).expanduser() if raw else None
+    if root is None or not root.is_dir():
+        return
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(root), html=True), name="ui")
+
+
+_mount_ui()
