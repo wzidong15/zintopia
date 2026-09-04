@@ -22,12 +22,13 @@
 ## 功能
 
 - GitHub 风格深色界面：自选、美股涨跌榜（涨幅 / 跌幅 / 活跃 / 筛选）、指数条（SPY、QQQ、DIA、IWM、VIX）
-- 自选保存在浏览器（`localStorage`）；★ 添加，× 删除；可按名称或当日涨跌幅排序
+- 自选保存在 `~/.zintopia/watchlist.json`（与 Docker 共用）；★ 添加，× 删除；可按名称或当日涨跌幅排序
 - 按代码或名称搜索
 - OHLCV 图表（美国东部时间）；默认区间 **1D**（`1h` / `3h` / `1d` / `5d` / `1mo` / `3mo` / `6mo` / `1y` / `5y`）；可选 **vs** 对照线（默认关闭，对照代码默认 SPY）
 - **Market News**：全市场 Yahoo 头条（三列网格）；默认每 60 秒刷新（`ZINTOPIA_NEWS_REFRESH_SEC`，或 `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`）。**Breaking** 仅当标题含 breaking / just in / flash / developing / alert 等词；**Alert** 是另一套严重措辞启发式
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
+- **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛（选项对齐 [Portfolio Visualizer](https://portfoliovisualizer.com/monte-carlo-simulation)）。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
 - **LLM 研究对话**：自行提问，或使用 BUY / SELL / LONG CALL / LONG PUT 快捷入口，并带上宏观背景（SPY、QQQ、DIA、IWM、VIX），经 OpenAI 或 Anthropic 回答，可在同一会话追问。需要密钥；用 **Stop** 取消进行中的回复。
 
@@ -51,7 +52,7 @@ chmod +x start.sh
 
 ### Docker
 
-一个容器同时提供界面和 API，端口 8000。模拟组合存在 named volume（`ZINTOPIA_DATA_DIR=/data`）。密钥来自仓库根目录 `.env`（Compose 做变量插值，不会打进镜像）。
+一个容器同时提供界面和 API，端口 8000。模拟组合与自选与 `./start.sh` 共用 `~/.zintopia`（挂到容器内 `/data`）。密钥来自仓库根目录 `.env`（Compose 做变量插值，不会打进镜像）。主机路径可用 `ZINTOPIA_HOST_DATA_DIR` 覆盖。
 
 ```bash
 cp .env.example .env   # 填入你要用的密钥
@@ -63,7 +64,7 @@ docker compose up --build
 | 界面 | http://localhost:8000 |
 | API 文档 | http://localhost:8000/docs |
 
-`docker compose down` 停止。`docker compose down -v` 还会删掉 volume 里的模拟组合。本地热更新仍用 `./start.sh`（界面在 5173）。
+`docker compose down` 停止。模拟组合仍在 `~/.zintopia`。本地热更新仍用 `./start.sh`（界面在 5173）。改过 Compose 后需要重建容器（`docker compose up -d --force-recreate`）才会挂上这个目录。
 
 在 macOS 上，`start.sh` 会设置 `ZINTOPIA_BIND_INTERFACE=en0`，以便自动源地址选择失败时（`Errno 49` / “Can't assign requested address”）出站 HTTPS 绑定到 Wi-Fi。可用 `ZINTOPIA_BIND_INTERFACE=` 或 `ZINTOPIA_BIND_IP=` 覆盖。`FINTOPIA_*` 与 `UTOPIA_*` 名称仍可作为别名。
 
@@ -91,7 +92,7 @@ docker compose up --build
 | Day-gainers | 等权轮动美股当日涨幅前 3。比双动量 / 行业轮动更噪。 |
 | RSI mean reversion | RSI < 30 时用约 25% 现金买入；RSI > 70 时卖出。无趋势过滤。 |
 
-组合存在本地 `~/.zintopia/portfolios.json`（不进 git）。同一目录还有国会 PTR 缓存（`congress_ptr.json`）。可用 `ZINTOPIA_DATA_DIR` 覆盖。在界面删除组合即删除数据。重启应用不会清空模拟资金或成交。
+组合存在本地 `~/.zintopia/portfolios.json`（不进 git）。自选是同一目录的 `watchlist.json`。国会 PTR 缓存是 `congress_ptr.json`。可用 `ZINTOPIA_DATA_DIR` 覆盖。在界面删除组合即删除数据。重启应用不会清空模拟资金或成交。
 
 仅供研究 / 模拟，且 **只做正股**（无期权）。**不构成投资建议。** 若把这些想法用到实盘，可能亏真金。
 
@@ -113,7 +114,8 @@ cp .env.example .env
 | `ZINTOPIA_MARKET_NEWS_REFRESH_SEC` | 仅市场新闻（未设时用 `ZINTOPIA_NEWS_REFRESH_SEC`）。 |
 | `ZINTOPIA_TICKER_NEWS_REFRESH_SEC` | 仅当前股票新闻（未设时用 `ZINTOPIA_NEWS_REFRESH_SEC`）。 |
 | `ZINTOPIA_STRATEGY_INTERVAL_SEC` | 服务运行时自动策略尝试一步的间隔（默认 `3600` = 1 小时）。 |
-| `ZINTOPIA_DATA_DIR` | 模拟组合与国会 PTR 缓存的本地 JSON 目录（默认 `~/.zintopia`）。 |
+| `ZINTOPIA_DATA_DIR` | 模拟组合、自选与国会 PTR 缓存的本地 JSON 目录（默认 `~/.zintopia`）。Docker 内为 `/data`。 |
+| `ZINTOPIA_HOST_DATA_DIR` | Compose 挂到 `/data` 的主机路径（默认 `~/.zintopia`）。 |
 | `ZINTOPIA_HTTP_POOL_SIZE` | 出站行情 HTTP 的 keep-alive 连接池（默认 `20`，限制 2–128）。 |
 | `POLYGON_API_KEY` 或 `MASSIVE_API_KEY` | 最新成交快照（套餐允许时为实时） |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM 研究与 Vibe 对话（默认模型 `gpt-4.1`） |
@@ -184,16 +186,17 @@ backend/newsfeed.py      Yahoo 个股新闻 + 市场 RSS 头条
 backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
+backend/monte_carlo.py   组合蒙特卡洛（月度历史）
 backend/broker_import.py 只读解析券商持仓 CSV/TSV 快照
 backend/llm_advice.py    OpenAI / Anthropic 调用
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 开发启动脚本（若存在则加载 .env）
 Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
-docker-compose.yml       界面与 API 在 8000 端口，模拟组合在 volume
+docker-compose.yml       界面与 API 在 8000 端口，模拟组合来自 ~/.zintopia
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
-~/.zintopia/             本地模拟组合 + PTR 缓存（不进 git）
+~/.zintopia/             本地模拟组合、自选、PTR 缓存（不进 git）
 ```
 
 ## 密钥

@@ -17,6 +17,7 @@ Zintopia 是研究界面，不是券商。**不构成投资建议。** 未登录
 | 最新价（顶栏、自选、指数、常规时段模拟成交） | 有密钥则 Polygon snapshot，否则 TradingView scanner，再 Yahoo `yfinance`，再 Stooq | 可选 `POLYGON_API_KEY` / `MASSIVE_API_KEY` |
 | 纽交所现金时段关闭时的模拟净值 | Yahoo 盘前 / 盘后最新价 | 无 |
 | K 线 | Yahoo `yf.download`；日/周线在 Yahoo 429 时回退 Polygon aggregates | Polygon 可选 |
+| 组合蒙特卡洛 | Yahoo 月线 `range=max`；429 时 Polygon monthly | Polygon 可选 |
 | 纸上策略（均线、RSI、200 日、双动量、行业轮动） | 与图表同一套日线缓存；Yahoo 限流则 Polygon 日线 | Polygon 可选 |
 | 涨跌榜、筛选、搜索、同业 | TradingView `POST https://scanner.tradingview.com/america/scan` | 无（未登录） |
 | 日线技术评级 | `tradingview-ta` → `https://scanner.tradingview.com/.../scan` | 无 |

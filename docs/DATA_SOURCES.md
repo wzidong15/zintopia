@@ -226,8 +226,8 @@ TradingView’s paid Supercharts subscription is unrelated to this widget.
 | Store | Path |
 |---|---|
 | Paper funds + imported snapshots | `~/.zintopia/portfolios.json` (`ZINTOPIA_DATA_DIR`) |
+| Watchlist | `~/.zintopia/watchlist.json` (browser `localStorage` is a cache; first load can copy an older origin) |
 | Congress PTR cache | `~/.zintopia/congress_ptr.json` |
-| Watchlist / UI prefs | Browser `localStorage` |
 | Broker import | User-supplied CSV/TSV parsed locally (`broker_import.py`) |
 
 ---
@@ -251,7 +251,7 @@ When the NYSE cash session is closed (America/New_York), paper marks overlay Yah
 2. On Yahoo rate limit or empty daily/weekly bars: Polygon aggregates (if key present)
 3. Else HTTP **429** (or last cached bars if we already had a good chart)
 
-Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still poll every 30s (`ZINTOPIA_CHART_REFRESH_SEC`). Daily/weekly ranges cache about **15 minutes**.
+Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still poll every 30s (`ZINTOPIA_CHART_REFRESH_SEC`). Daily/weekly ranges cache about **15 minutes**. Monte Carlo (`POST /api/monte-carlo`) uses Yahoo **monthly** history (`range=max`), with Polygon monthly aggregates if Yahoo 429s and a key is set.
 
 ---
 

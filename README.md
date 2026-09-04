@@ -22,12 +22,13 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 ## Features
 
 - GitHub-style dark UI: watchlist, US movers (gainers / losers / active / screen), index strip (SPY, QQQ, DIA, IWM, VIX)
-- Watchlist persisted in the browser (`localStorage`); add with ★, remove with ×; sort by name or % day
+- Watchlist persisted in `~/.zintopia/watchlist.json` (shared with Docker); add with ★, remove with ×; sort by name or % day
 - Search by ticker or name
 - OHLCV chart in Eastern Time; default range is **1D** (`1h` / `3h` / `1d` / `5d` / `1mo` / `3mo` / `6mo` / `1y` / `5y`); optional **vs** overlay (off by default, ticker defaults to SPY)
 - **Market News**: session-wide Yahoo tape (three-column grid); polls every 60s (`ZINTOPIA_NEWS_REFRESH_SEC`, or `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`). **Breaking** only if the headline contains words such as breaking / just in / flash / developing / alert; **Alert** is a separate severe-phrase heuristic
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
+- **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (same knobs as [Portfolio Visualizer](https://portfoliovisualizer.com/monte-carlo-simulation): cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
 - **LLM research dialog**: type a question or use the BUY / SELL / LONG CALL / LONG PUT starter, with macro context (SPY, QQQ, DIA, IWM, VIX) via OpenAI or Anthropic, then follow-ups in the same conversation. Requires a key; use **Stop** to cancel an in-flight reply.
 
@@ -51,7 +52,7 @@ chmod +x start.sh
 
 ### Docker
 
-One container serves the UI and API on port 8000. Paper funds live in a named volume (`ZINTOPIA_DATA_DIR=/data`). Secrets come from the repo `.env` (Compose interpolates it; it is not copied into the image).
+One container serves the UI and API on port 8000. Paper funds and the watchlist are the same `~/.zintopia` directory as `./start.sh` (bind-mounted at `/data`). Secrets come from the repo `.env` (Compose interpolates it; it is not copied into the image). Override the host path with `ZINTOPIA_HOST_DATA_DIR`.
 
 ```bash
 cp .env.example .env   # fill keys you use
@@ -63,7 +64,7 @@ docker compose up --build
 | UI | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
 
-`docker compose down` stops it. `docker compose down -v` also deletes paper-fund data in the volume. Keep using `./start.sh` for local Vite hot reload (UI on 5173).
+`docker compose down` stops it. Paper funds stay in `~/.zintopia`. Keep using `./start.sh` for local Vite hot reload (UI on 5173). After changing the Compose file, recreate the container (`docker compose up -d --force-recreate`) so the bind mount applies.
 
 On macOS, `start.sh` sets `ZINTOPIA_BIND_INTERFACE=en0` so outbound HTTPS can bind to Wi-Fi when automatic source-address selection fails (`Errno 49` / “Can't assign requested address”). Override with `ZINTOPIA_BIND_INTERFACE=` or `ZINTOPIA_BIND_IP=`. `FINTOPIA_*` and `UTOPIA_*` names still work as aliases.
 
@@ -91,7 +92,7 @@ Performance (NAV chart and marked-to-market P/L) refreshes every 30 seconds (`ZI
 | Day-gainers | Rotates into the top 3 US day-gainers, equal weight. Noisy compared with dual momentum or sector rotation. |
 | RSI mean reversion | Buys ~25% of cash when RSI < 30; sells when RSI > 70. No trend filter. |
 
-Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The same directory holds the Congress PTR cache (`congress_ptr.json`). Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
+Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The watchlist is `watchlist.json` in that same directory. The Congress PTR cache is `congress_ptr.json`. Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
 
 This is research / simulation only, and **shares only** (no options). **Not financial advice.** You can lose real money if you copy these ideas in a live account.
 
@@ -113,7 +114,8 @@ cp .env.example .env
 | `ZINTOPIA_MARKET_NEWS_REFRESH_SEC` | Market news tape only (falls back to `ZINTOPIA_NEWS_REFRESH_SEC`). |
 | `ZINTOPIA_TICKER_NEWS_REFRESH_SEC` | Selected-ticker news only (falls back to `ZINTOPIA_NEWS_REFRESH_SEC`). |
 | `ZINTOPIA_STRATEGY_INTERVAL_SEC` | How often auto paper strategies try a step while the server is up (default `3600` = 1 hour). |
-| `ZINTOPIA_DATA_DIR` | Local JSON dir for paper funds and the Congress PTR cache (default `~/.zintopia`). |
+| `ZINTOPIA_DATA_DIR` | Local JSON dir for paper funds, watchlist, and the Congress PTR cache (default `~/.zintopia`). Inside Docker this is `/data`. |
+| `ZINTOPIA_HOST_DATA_DIR` | Host path Compose bind-mounts at `/data` (default `~/.zintopia`). |
 | `ZINTOPIA_HTTP_POOL_SIZE` | Keep-alive connection pool for outbound quote HTTP (default `20`, clamp 2–128). |
 | `POLYGON_API_KEY` or `MASSIVE_API_KEY` | Last-trade snapshots (realtime when the plan allows) |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM research and Vibe dialogs (default model `gpt-4.1`) |
@@ -184,16 +186,17 @@ backend/newsfeed.py      Yahoo ticker news + market RSS tape
 backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
+backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
 backend/broker_import.py Parse read-only broker position CSV/TSV snapshots
 backend/llm_advice.py    OpenAI / Anthropic calls
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 Dev launcher (loads .env if present)
 Dockerfile               Multi-stage image (Vite build + FastAPI)
-docker-compose.yml       UI + API on port 8000, paper funds in a volume
+docker-compose.yml       UI + API on port 8000, paper funds from ~/.zintopia
 .env.example             Key placeholders — copy to .env locally
 docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
-~/.zintopia/             Local paper funds + PTR cache (not in git)
+~/.zintopia/             Local paper funds, watchlist, PTR cache (not in git)
 ```
 
 ## Secrets

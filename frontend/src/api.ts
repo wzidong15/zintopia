@@ -3,6 +3,8 @@ import type { Fundamentals, PeerList, ScreenerResult } from "./fundamentals";
 import type { Ownership } from "./OwnershipPanel";
 import type { LlmAdviceChatResponse, LlmAdviceResponse, VibePortfolioChatResponse, VibePortfolioResponse } from "./llm";
 import type { Portfolio, PortfolioStrategyKind, PortfolioSummary } from "./portfolio";
+import type { McMeta, McResult } from "./monteCarlo";
+import type { WatchSort } from "./watchlist";
 import type { Bar, NewsItem, Profile, Quote, TA } from "./types";
 
 function errorFromBody(text: string, fallback: string) {
@@ -118,6 +120,14 @@ export const api = {
       signal,
     ),
   search: (q: string) => getJson<{ items: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
+  watchlist: () =>
+    getJson<{ symbols: string[]; sort: WatchSort; persisted: boolean }>("/api/watchlist"),
+  putWatchlist: (symbols: string[], sort: WatchSort) =>
+    sendJson<{ symbols: string[]; sort: WatchSort; persisted: boolean }>(
+      "/api/watchlist",
+      "PUT",
+      { symbols, sort },
+    ),
   portfolios: (opts?: { live?: boolean }) =>
     getJson<{ items: PortfolioSummary[] }>(
       `/api/portfolios${opts?.live ? "?live=true" : ""}`,
@@ -175,4 +185,6 @@ export const api = {
       },
       signal,
     ),
+  monteCarloMeta: () => getJson<McMeta>("/api/monte-carlo/meta"),
+  runMonteCarlo: (body: object) => sendJson<McResult>("/api/monte-carlo", "POST", body),
 };

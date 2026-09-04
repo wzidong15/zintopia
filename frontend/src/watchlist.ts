@@ -87,6 +87,65 @@ export function saveWatchSort(sort: WatchSort) {
   localStorage.setItem(SORT_KEY, JSON.stringify(sort));
 }
 
+function asWatchSort(raw: unknown): WatchSort {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_SORT };
+  const parsed = raw as Partial<WatchSort>;
+  const by: WatchSortBy =
+    parsed.by === "name" || parsed.by === "pct" || parsed.by === "added" ? parsed.by : "added";
+  const dir: WatchSortDir = parsed.dir === "desc" ? "desc" : "asc";
+  return { by, dir: by === "added" ? "asc" : dir };
+}
+
+export function sameWatchlist(a: string[], b: string[]) {
+  return a.length === b.length && a.every((s, i) => s === b[i]);
+}
+
+export function isDefaultWatchlist(symbols: string[]) {
+  return sameWatchlist(symbols, DEFAULT_WATCHLIST);
+}
+
+export function isDefaultWatchSort(sort: WatchSort) {
+  return sort.by === "added";
+}
+
+export function hasFactoryWatchlist(symbols: string[]) {
+  return DEFAULT_WATCHLIST.every((s) => symbols.includes(s));
+}
+
+export function mergeWatchState(
+  server: { symbols?: string[]; sort?: WatchSort; persisted?: boolean },
+  localSymbols: string[],
+  localSort: WatchSort,
+): { symbols: string[]; sort: WatchSort; shouldSave: boolean } {
+  const serverSort = asWatchSort(server.sort);
+  if (!server.persisted) {
+    const useLocal = !isDefaultWatchlist(localSymbols) || !isDefaultWatchSort(localSort);
+    if (useLocal) return { symbols: localSymbols, sort: localSort, shouldSave: true };
+    return { symbols: [...DEFAULT_WATCHLIST], sort: { ...DEFAULT_SORT }, shouldSave: false };
+  }
+  const serverSymbols = [
+    ...new Set((server.symbols || []).map((s) => s.trim().toUpperCase()).filter(Boolean)),
+  ];
+  let sort = serverSort;
+  let shouldSave = false;
+  if (isDefaultWatchSort(serverSort) && !isDefaultWatchSort(localSort)) {
+    sort = localSort;
+    shouldSave = true;
+  }
+  const extras = hasFactoryWatchlist(localSymbols)
+    ? localSymbols.filter((s) => !DEFAULT_WATCHLIST.includes(s))
+    : localSymbols;
+  const ordered = [...serverSymbols];
+  for (const s of extras) {
+    const sym = s.trim().toUpperCase();
+    if (sym && !ordered.includes(sym)) {
+      ordered.push(sym);
+      shouldSave = true;
+    }
+  }
+  return { symbols: ordered, sort, shouldSave };
+}
+
 export function defaultWatchSymbol(symbols: string[], sort: WatchSort = DEFAULT_SORT): string {
   if (!symbols.length) return "AAPL";
   if (sort.by === "name") {

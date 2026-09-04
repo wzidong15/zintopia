@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import Chart from "./Chart";
 import PortfolioPanel from "./PortfolioPanel";
+import MonteCarloPanel from "./MonteCarloPanel";
 import DeepPanel from "./DeepPanel";
 import LlmAdvicePanel from "./LlmAdvicePanel";
 import FundamentalsPanel from "./FundamentalsPanel";
@@ -10,7 +11,7 @@ import type { DeepAnalysis } from "./deep";
 import type { Fundamentals, PeerList } from "./fundamentals";
 import OwnershipPanel, { type Ownership } from "./OwnershipPanel";
 import type { Bar, NewsItem, Profile, Quote, TA } from "./types";
-import { defaultWatchSymbol, loadWatchlist, loadWatchSort, removeFromWatchlist, saveWatchlist, saveWatchSort, sortWatchlist, toggleWatchlistSymbol, watchSortFromId, watchSortId, WATCH_SORT_OPTIONS } from "./watchlist";
+import { defaultWatchSymbol, loadWatchlist, loadWatchSort, mergeWatchState, removeFromWatchlist, saveWatchlist, saveWatchSort, sortWatchlist, toggleWatchlistSymbol, watchSortFromId, watchSortId, WATCH_SORT_OPTIONS } from "./watchlist";
 import { getCachedQuote, partialFromSearch, rememberQuote, rememberQuotes } from "./quoteCache";
 import { fetchBars, getCachedBars, prefetchBars } from "./chartCache";
 import { relativeReturn, scaleToPrimary } from "./chartOverlays";
@@ -256,7 +257,7 @@ export default function App() {
   >([]);
   const [err, setErr] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<number | null>(null);
-  const [view, setView] = useState<"research" | "portfolios">("research");
+  const [view, setView] = useState<"research" | "portfolios" | "montecarlo">("research");
 
   useEffect(() => {
     let live = true;
@@ -310,6 +311,29 @@ export default function App() {
       clearInterval(id);
     };
   }, [board]);
+
+  useEffect(() => {
+    let live = true;
+    const localSymbols = loadWatchlist();
+    const localSort = loadWatchSort();
+    api
+      .watchlist()
+      .then((remote) => {
+        if (!live) return;
+        const merged = mergeWatchState(remote, localSymbols, localSort);
+        setWatchSymbols(merged.symbols);
+        setWatchSort(merged.sort);
+        saveWatchlist(merged.symbols);
+        saveWatchSort(merged.sort);
+        if (merged.shouldSave) {
+          void api.putWatchlist(merged.symbols, merged.sort).catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -562,23 +586,28 @@ export default function App() {
     setSymbol(sym);
   };
   const isWatched = (s: string) => watchSymbols.includes(s.trim().toUpperCase());
+  const persistWatch = (symbols: string[], sort = watchSort) => {
+    saveWatchlist(symbols);
+    saveWatchSort(sort);
+    void api.putWatchlist(symbols, sort).catch(() => undefined);
+  };
   const toggleWatch = (s: string) => {
     setWatchSymbols((prev) => {
       const next = toggleWatchlistSymbol(prev, s);
-      saveWatchlist(next);
+      persistWatch(next);
       return next;
     });
   };
   const removeWatch = (s: string) => {
     setWatchSymbols((prev) => {
       const next = removeFromWatchlist(prev, s);
-      saveWatchlist(next);
+      persistWatch(next);
       return next;
     });
   };
   const setWatchSortId = (id: string) => {
     const next = watchSortFromId(id);
-    saveWatchSort(next);
+    persistWatch(watchSymbols, next);
     setWatchSort(next);
   };
   const sortedWatch = useMemo(
@@ -666,6 +695,13 @@ export default function App() {
             onClick={() => setView("portfolios")}
           >
             Stock portfolio
+          </button>
+          <button
+            type="button"
+            className={view === "montecarlo" ? "on" : ""}
+            onClick={() => setView("montecarlo")}
+          >
+            Portfolio MC Simulation
           </button>
         </div>
         <div className="search">
@@ -1005,10 +1041,12 @@ export default function App() {
           }}
         />
       )}
+      {view === "montecarlo" && <MonteCarloPanel />}
       <footer className="foot">
         <span>
           Quotes: TradingView scanner (unsigned ≈ 15m delay). Charts/news: Yahoo Finance. Stock
-          portfolio is paper shares only — no options. Not financial advice.
+          portfolio is paper shares only — no options. Monte Carlo is hypothetical monthly paths.
+          Not financial advice.
         </span>
         <span>{asOf ? new Date(asOf * 1000).toLocaleTimeString() : ""}</span>
       </footer>

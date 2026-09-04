@@ -22,9 +22,10 @@ services:
       ZINTOPIA_HTTP_POOL_SIZE: ${ZINTOPIA_HTTP_POOL_SIZE:-20}
       ZINTOPIA_DATA_DIR: /data
       ZINTOPIA_STATIC_DIR: /app/ui
+    # Host files are owned by your login; the image user is uid 10001 and cannot
+    # write them. Root in the container is fine for this local research app.
+    # Linux: ZINTOPIA_UID=$(id -u) ZINTOPIA_GID=$(id -g) docker compose up
+    user: "${ZINTOPIA_UID:-0}:${ZINTOPIA_GID:-0}"
     volumes:
-      - zintopia-data:/data
+      - ${ZINTOPIA_HOST_DATA_DIR:-${HOME}/.zintopia}:/data
     restart: unless-stopped
-
-volumes:
-  zintopia-data:

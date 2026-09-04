@@ -11,10 +11,10 @@ Local US-stock visualization app in this repo. Not OpenBB Workspace. Formerly Fi
 
 - Backend: `backend/app.py` (FastAPI, port 8000)
 - Frontend: `frontend/` (Vite React, port 5173, proxies `/api`)
-- Run: `./start.sh` (loads repo-root `.env` if present). Docker: `docker compose up --build` (UI + API at http://localhost:8000; paper funds in volume `zintopia-data`).
+- Run: `./start.sh` (loads repo-root `.env` if present). Docker: `docker compose up --build` (UI + API at http://localhost:8000; paper funds and watchlist are the same `~/.zintopia` as `./start.sh`).
 - Quote poll: `ZINTOPIA_LIVE_REFRESH_SEC` (default 10; `FINTOPIA_*` / `UTOPIA_*` aliases still work). Chart + portfolio NAV: `ZINTOPIA_CHART_REFRESH_SEC` (default 30). Market tape + ticker news: `ZINTOPIA_NEWS_REFRESH_SEC` (default 60); override with `ZINTOPIA_MARKET_NEWS_REFRESH_SEC` / `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`.
 - Stock portfolio marks: Yahoo pre-market / after hours when the NYSE cash session is closed (America/New_York).
-- Paper funds persist in `~/.zintopia/portfolios.json` (not in git). Congress PTRs cache in `~/.zintopia/congress_ptr.json`. Optional `ZINTOPIA_DATA_DIR`. First launch renames `~/.fintopia` if present.
+- Paper funds persist in `~/.zintopia/portfolios.json` (not in git). Watchlist in `watchlist.json`. Congress PTRs cache in `~/.zintopia/congress_ptr.json`. Optional `ZINTOPIA_DATA_DIR`. First launch renames `~/.fintopia` if present.
 - Outbound HTTP uses a process-wide httpx/requests pool (keep-alive; `ZINTOPIA_HTTP_POOL_SIZE`, default 20). Quote sources run sequentially. Do not add per-call `httpx.Client()` / `requests.Session()` / curl on the quote path.
 
 ## Data source priority
@@ -46,7 +46,9 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET /api/ta/{symbol}` | TradingView summary |
 | `GET /api/search?q=` | Symbol search |
 | `GET /api/deep/{symbol}` | Insider (Yahoo Form 4), options (next 3 expiries), Congress PTRs (House Clerk + Senate eFD), news, forecast, research stance |
-| `GET /api/snapshot` | Dashboard bundle |
+| `GET/PUT /api/watchlist` | Watchlist symbols + sort (`~/.zintopia/watchlist.json`) |
+| `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios for MC |
+| `POST /api/monte-carlo` | Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |
 | `GET/POST /api/portfolios` | Stock paper funds (shares only, no options) |
 | `POST /api/portfolios/import` | Imported snapshot from a read-only broker CSV/TSV (`cost_basis=mark` import-time price, or `csv` actual basis; no login) |
 | `POST /api/portfolios/{id}/orders` | Simulated trades |
