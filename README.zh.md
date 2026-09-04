@@ -13,9 +13,9 @@
 
 # Zintopia
 
-本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟，以及可选的 LLM / 启发式分析。
+本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟、对齐 Portfolio Visualizer 的蒙特卡洛，以及可选的 LLM / 启发式分析。
 
-启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
+启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
 
 这是研究界面，不是券商。**不构成投资建议。** 数据可能延迟、不完整或有误。
 
@@ -64,7 +64,9 @@ docker compose up --build
 | 界面 | http://localhost:8000 |
 | API 文档 | http://localhost:8000/docs |
 
-`docker compose down` 停止。模拟组合仍在 `~/.zintopia`。本地热更新仍用 `./start.sh`（界面在 5173）。改过 Compose 后需要重建容器（`docker compose up -d --force-recreate`）才会挂上这个目录。
+`docker compose down` 停止。模拟组合与自选仍在 `~/.zintopia`。本地热更新仍用 `./start.sh`（界面在 5173）。改过 Compose 后需要重建容器（`docker compose up -d --force-recreate`）才会挂上这个目录。
+
+在 Linux 上请传入本机 uid，否则容器写不了你的主机文件：`ZINTOPIA_UID=$(id -u) ZINTOPIA_GID=$(id -g) docker compose up --build`。镜像用户是 10001；未设这两个变量时 Compose 默认用容器内 root。
 
 在 macOS 上，`start.sh` 会设置 `ZINTOPIA_BIND_INTERFACE=en0`，以便自动源地址选择失败时（`Errno 49` / “Can't assign requested address”）出站 HTTPS 绑定到 Wi-Fi。可用 `ZINTOPIA_BIND_INTERFACE=` 或 `ZINTOPIA_BIND_IP=` 覆盖。`FINTOPIA_*` 与 `UTOPIA_*` 名称仍可作为别名。
 
@@ -95,6 +97,17 @@ docker compose up --build
 组合存在本地 `~/.zintopia/portfolios.json`（不进 git）。自选是同一目录的 `watchlist.json`。国会 PTR 缓存是 `congress_ptr.json`。可用 `ZINTOPIA_DATA_DIR` 覆盖。在界面删除组合即删除数据。重启应用不会清空模拟资金或成交。
 
 仅供研究 / 模拟，且 **只做正股**（无期权）。**不构成投资建议。** 若把这些想法用到实盘，可能亏真金。
+
+## Portfolio MC Simulation
+
+**Portfolio MC Simulation** 页按月度历史跑假设路径，选项对齐 [Portfolio Visualizer Monte Carlo](https://portfoliovisualizer.com/monte-carlo-simulation)。不是预测。
+
+1. 在顶栏打开 **Portfolio MC Simulation**。表单在上，跑完后百分位图与表格在下。
+2. 选择配置：资产类别下拉 + Lazy 组合（60/40、All Seasons、Core Four 等，映射到 VTI / BND 一类 ETF）、从模拟基金 **Import portfolio**（按盯市持仓加权，现金记为 SHV），或直接填代码。
+3. 设置起始金额、现金流（无 / 定投 / 取出 / 比例 / 寿命）、税负折减、模拟模型（历史 bootstrap 或统计 / GARCH）、通胀、再平衡、收益序列压力、路径数（默认 1000）。
+4. 运行。结果包括百分位扇形图、成功率、期末财富 / CAGR / 最大回撤，以及年度表。
+
+历史用 Yahoo 月线（`range=max`）；Yahoo 返回 429 且有密钥时回退 Polygon 月线。假设路径。**不构成投资建议。**
 
 ## 可选密钥
 
@@ -134,6 +147,7 @@ cp .env.example .env
 |---|---|---|
 | 行情 / 指数 / 自选 | 有密钥则 Polygon snapshot → TradingView scanner → yfinance → Stooq | Massive 美股：Basic $0 → Starter $29（15 分钟 + snapshot）→ Developer $79 → Advanced $199（实时）。TV 网站付费套餐与交易所数据包 **不会** 改变我们未登录的 scanner |
 | 图表 / 纸上策略 | Yahoo `yf.download`；日/周线在 Yahoo 429 时回退 Polygon aggregates | Yahoo Finance Plus（网站）**不能** 解锁 `yfinance` |
+| 组合蒙特卡洛 | Yahoo 月线 `range=max`；Yahoo 429 时 Polygon monthly | 与图表同一套 Yahoo/Polygon 历史。无额外密钥。 |
 | 涨跌榜 / 筛选 / 搜索 | TradingView scanner，授权后再试 Polygon 涨跌幅，再 Yahoo `day_gainers` 等 | 同行情行的 TV / Polygon |
 | 日线技术分析 | `tradingview-ta` → `scanner.tradingview.com` | 无单独 TA 密钥 |
 | 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo（`yfinance`，`query1`/`query2.finance.yahoo.com`）。官方公开 API 已于 2017 关闭 | Plus 是消费者网站套餐，不是 API |
@@ -155,7 +169,9 @@ cp .env.example .env
 | `GET /api/quote/{symbol}` | 单只报价 |
 | `GET /api/quotes?symbols=AAPL,MSFT` | 自选 |
 | `GET /api/movers?kind=gainers\|losers\|active` | 美股 |
-| `GET /api/history/{symbol}?range=1d\|5d\|1mo\|3mo\|6mo\|1y\|5y` | OHLCV |
+| `GET /api/history/{symbol}?range=1h\|3h\|1d\|5d\|1mo\|3mo\|6mo\|1y\|5y\|max` | OHLCV（`max` 为蒙特卡洛用的月线） |
+| `GET /api/watchlist` | 自选代码 + 排序（`~/.zintopia/watchlist.json`） |
+| `PUT /api/watchlist` | 保存自选（与 Docker 共用） |
 | `GET /api/profile/{symbol}` | 公司资料（Yahoo 有数据时含 beta、流通股本、空头） |
 | `GET /api/market-news` | 全市场 Yahoo 头条（`limit`，默认 24） |
 | `GET /api/news/{symbol}` | 个股头条 |
@@ -175,8 +191,11 @@ cp .env.example .env
 | `DELETE /api/portfolios/{id}` | 删除组合 |
 | `POST /api/portfolios/{id}/orders` | 模拟买卖（`shares` 或 `notional`） |
 | `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `trend_200` / `dual_momentum` / `sector_rot` / `rsi_trend` / `sma_cross` / `momentum` / `rsi_reversion` |
+| `POST /api/portfolios/{id}/tick` | 盯市 / 自动策略一步 |
 | `POST /api/portfolios/{id}/vibe` | 开始 Vibe 模拟组合对话（Yahoo + 日线技术分析，再 LLM） |
 | `POST /api/portfolios/{id}/vibe/chat` | 同一 `conversation_id` 追问 |
+| `GET /api/monte-carlo/meta` | 资产类别 ETF 映射 + Lazy 组合 |
+| `POST /api/monte-carlo` | 跑蒙特卡洛（Yahoo 月线；可导入模拟基金或资产类别权重） |
 
 ## 仓库结构
 
@@ -187,13 +206,14 @@ backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
 backend/monte_carlo.py   组合蒙特卡洛（月度历史）
+backend/watchlist.py     自选 JSON（`~/.zintopia/watchlist.json`）
 backend/broker_import.py 只读解析券商持仓 CSV/TSV 快照
 backend/llm_advice.py    OpenAI / Anthropic 调用
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 开发启动脚本（若存在则加载 .env）
 Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
-docker-compose.yml       界面与 API 在 8000 端口，模拟组合来自 ~/.zintopia
+docker-compose.yml       界面与 API 在 8000 端口；把 ~/.zintopia 挂到 /data
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
 ~/.zintopia/             本地模拟组合、自选、PTR 缓存（不进 git）

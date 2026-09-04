@@ -13,9 +13,9 @@
 
 # Zintopia
 
-Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, and optional LLM / heuristic analysis.
+Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Portfolio Visualizer-style Monte Carlo, and optional LLM / heuristic analysis.
 
-Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
+Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
 
 This is a research UI, not a broker. **Not financial advice.** Data can be delayed, incomplete, or wrong.
 
@@ -64,7 +64,9 @@ docker compose up --build
 | UI | http://localhost:8000 |
 | API docs | http://localhost:8000/docs |
 
-`docker compose down` stops it. Paper funds stay in `~/.zintopia`. Keep using `./start.sh` for local Vite hot reload (UI on 5173). After changing the Compose file, recreate the container (`docker compose up -d --force-recreate`) so the bind mount applies.
+`docker compose down` stops it. Paper funds and the watchlist stay in `~/.zintopia`. Keep using `./start.sh` for local Vite hot reload (UI on 5173). After changing the Compose file, recreate the container (`docker compose up -d --force-recreate`) so the bind mount applies.
+
+On Linux, pass your uid so the container can write those host files: `ZINTOPIA_UID=$(id -u) ZINTOPIA_GID=$(id -g) docker compose up --build`. The image user is 10001; Compose defaults to root in the container when those vars are unset.
 
 On macOS, `start.sh` sets `ZINTOPIA_BIND_INTERFACE=en0` so outbound HTTPS can bind to Wi-Fi when automatic source-address selection fails (`Errno 49` / “Can't assign requested address”). Override with `ZINTOPIA_BIND_INTERFACE=` or `ZINTOPIA_BIND_IP=`. `FINTOPIA_*` and `UTOPIA_*` names still work as aliases.
 
@@ -95,6 +97,17 @@ Performance (NAV chart and marked-to-market P/L) refreshes every 30 seconds (`ZI
 Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The watchlist is `watchlist.json` in that same directory. The Congress PTR cache is `congress_ptr.json`. Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
 
 This is research / simulation only, and **shares only** (no options). **Not financial advice.** You can lose real money if you copy these ideas in a live account.
+
+## Portfolio MC Simulation
+
+The **Portfolio MC Simulation** tab runs hypothetical monthly paths, modeled on [Portfolio Visualizer Monte Carlo](https://portfoliovisualizer.com/monte-carlo-simulation). It is not a forecast.
+
+1. Open **Portfolio MC Simulation** in the header. The form is on top; the percentile chart and tables render below after you run.
+2. Choose an allocation: asset-class dropdowns plus a lazy portfolio (60/40, All Seasons, Core Four, and similar, mapped to ETFs such as VTI / BND), **Import portfolio** from a paper fund (weights from marked holdings + cash as SHV), or type free tickers.
+3. Set initial value, cashflows (none / contribution / withdrawal / percent / life expectancy), tax haircut, simulation model (historical bootstrap or statistical / GARCH), inflation, rebalancing, sequence-of-returns stress, and path count (default 1000).
+4. Run. Results include a percentile fan chart, success rate, terminal wealth / CAGR / max drawdown, and a yearly table.
+
+History is Yahoo monthly bars (`range=max`), with Polygon monthly aggregates if Yahoo returns 429 and a key is set. Hypothetical. **Not financial advice.**
 
 ## Optional keys
 
@@ -134,6 +147,7 @@ Full inventory (URLs, env keys, and **paid/subscription tiers** for each vendor)
 |---|---|---|
 | Quotes / indices / watchlist | Polygon snapshot (if keyed) → TradingView scanner → yfinance → Stooq | Massive stocks: Basic $0 → Starter $29 (15m + snapshot) → Developer $79 → Advanced $199 (realtime). TV website Essential–Ultimate and exchange data packages do **not** change our unsigned scanner. |
 | Charts / paper strategies | Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429 | Yahoo Finance Plus (Bronze/Silver/Gold, website only) does **not** unlock `yfinance`. Polygon history needs a plan that allows aggregates. |
+| Portfolio Monte Carlo | Yahoo monthly `range=max`; Polygon monthly aggregates on Yahoo 429 | Same Yahoo/Polygon history row as charts. No extra key. |
 | Movers / screener / search | TradingView scanner, then Polygon gainers/losers if authorized, then Yahoo `day_gainers` / `day_losers` / `most_actives` | Same TV + Polygon rows as quotes |
 | Daily TA | `tradingview-ta` → `scanner.tradingview.com` | Same unsigned TV scanner; no TA API key |
 | Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance` on `query1`/`query2.finance.yahoo.com`). Official Yahoo public API was retired in 2017 | Yahoo Plus is a consumer site plan, not an API. Licensed vendors (Finnhub, Tiingo, …) are not used |
@@ -155,7 +169,9 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `GET /api/quote/{symbol}` | One quote |
 | `GET /api/quotes?symbols=AAPL,MSFT` | Watchlist |
 | `GET /api/movers?kind=gainers\|losers\|active` | US stocks |
-| `GET /api/history/{symbol}?range=1d\|5d\|1mo\|3mo\|6mo\|1y\|5y` | OHLCV |
+| `GET /api/history/{symbol}?range=1h\|3h\|1d\|5d\|1mo\|3mo\|6mo\|1y\|5y\|max` | OHLCV (`max` is monthly for Monte Carlo) |
+| `GET /api/watchlist` | Watchlist symbols + sort (`~/.zintopia/watchlist.json`) |
+| `PUT /api/watchlist` | Save watchlist (shared with Docker) |
 | `GET /api/profile/{symbol}` | Company profile (includes beta, float, short interest when Yahoo has it) |
 | `GET /api/market-news` | Session-wide Yahoo headlines (`limit`, default 24) |
 | `GET /api/news/{symbol}` | Ticker headlines |
@@ -175,8 +191,11 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `DELETE /api/portfolios/{id}` | Delete fund |
 | `POST /api/portfolios/{id}/orders` | Paper buy/sell (`shares` or `notional`) |
 | `PUT /api/portfolios/{id}/strategy` | `manual` / `buy_hold` / `trend_200` / `dual_momentum` / `sector_rot` / `rsi_trend` / `sma_cross` / `momentum` / `rsi_reversion` |
+| `POST /api/portfolios/{id}/tick` | Mark-to-market / auto strategy step |
 | `POST /api/portfolios/{id}/vibe` | Start Vibe paper-fund conversation (Yahoo + daily TA, then LLM) |
 | `POST /api/portfolios/{id}/vibe/chat` | Follow-up on the same `conversation_id` |
+| `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios |
+| `POST /api/monte-carlo` | Run Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |
 
 ## Repo layout
 
@@ -187,13 +206,14 @@ backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
 backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
+backend/watchlist.py     Watchlist JSON (`~/.zintopia/watchlist.json`)
 backend/broker_import.py Parse read-only broker position CSV/TSV snapshots
 backend/llm_advice.py    OpenAI / Anthropic calls
 backend/requirements.txt
 frontend/                Vite + React + Lightweight Charts
 start.sh                 Dev launcher (loads .env if present)
 Dockerfile               Multi-stage image (Vite build + FastAPI)
-docker-compose.yml       UI + API on port 8000, paper funds from ~/.zintopia
+docker-compose.yml       UI + API on port 8000; bind-mounts ~/.zintopia at /data
 .env.example             Key placeholders — copy to .env locally
 docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
 ~/.zintopia/             Local paper funds, watchlist, PTR cache (not in git)

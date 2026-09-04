@@ -16,6 +16,7 @@ Zintopia is a research UI, not a broker. **Not financial advice.** Unsigned Trad
 | Paper NAV when NYSE cash session is closed | Yahoo pre-market / after-hours last | none |
 | OHLCV chart | Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates if Yahoo 429s | Polygon optional |
 | Paper strategies (SMA, RSI, 200-day, dual momentum, sector rotation) | Yahoo daily history (same cache as charts); Polygon daily aggs if Yahoo is rate-limited | Polygon optional |
+| Portfolio Monte Carlo | Yahoo monthly `range=max`; Polygon monthly aggregates if Yahoo 429s | Polygon optional |
 | Movers, screener, search, peers | TradingView scanner `POST https://scanner.tradingview.com/america/scan` | none (unsigned) |
 | Daily TA rating | `tradingview-ta` → `https://scanner.tradingview.com/{screener}/scan` | none (unsigned) |
 | Profile, financials, holders, short interest, Form 4, options, analyst targets, ticker news | Yahoo via `yfinance` (`query1` / `query2.finance.yahoo.com`) | none |
@@ -277,4 +278,6 @@ Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still 
 | `backend/congress_ptr.py` | House + Senate PTR |
 | `backend/llm_advice.py` | OpenAI / Anthropic HTTP |
 | `backend/portfolios.py` | Paper funds; history via the same cached Yahoo/Polygon helper |
+| `backend/monte_carlo.py` | Monthly Yahoo/Polygon history for MC paths |
+| `backend/watchlist.py` | Watchlist JSON under `~/.zintopia` |
 | `.env.example` | Empty key names |
