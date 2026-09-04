@@ -13,7 +13,7 @@
 
 # Zintopia
 
-本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟、对齐 Portfolio Visualizer 的蒙特卡洛，以及可选的 LLM / 启发式分析。
+本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟、蒙特卡洛路径，以及可选的 LLM / 启发式分析。
 
 启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
 
@@ -28,7 +28,7 @@
 - **Market News**：全市场 Yahoo 头条（三列网格）；默认每 60 秒刷新（`ZINTOPIA_NEWS_REFRESH_SEC`，或 `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`）。**Breaking** 仅当标题含 breaking / just in / flash / developing / alert 等词；**Alert** 是另一套严重措辞启发式
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
-- **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛（选项对齐 [Portfolio Visualizer](https://portfoliovisualizer.com/monte-carlo-simulation)）。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
+- **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
 - **LLM 研究对话**：自行提问，或使用 BUY / SELL / LONG CALL / LONG PUT 快捷入口，并带上宏观背景（SPY、QQQ、DIA、IWM、VIX），经 OpenAI 或 Anthropic 回答，可在同一会话追问。需要密钥；用 **Stop** 取消进行中的回复。
 
@@ -100,7 +100,7 @@ docker compose up --build
 
 ## Portfolio MC Simulation
 
-**Portfolio MC Simulation** 页按月度历史跑假设路径，选项对齐 [Portfolio Visualizer Monte Carlo](https://portfoliovisualizer.com/monte-carlo-simulation)。不是预测。
+**Portfolio MC Simulation** 页按月度历史跑假设路径。不是预测。
 
 1. 在顶栏打开 **Portfolio MC Simulation**。表单在上，跑完后百分位图与表格在下。
 2. 选择配置：资产类别下拉 + Lazy 组合（60/40、All Seasons、Core Four 等，映射到 VTI / BND 一类 ETF）、从模拟基金 **Import portfolio**（按盯市持仓加权，现金记为 SHV），或直接填代码。

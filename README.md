@@ -13,7 +13,7 @@
 
 # Zintopia
 
-Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Portfolio Visualizer-style Monte Carlo, and optional LLM / heuristic analysis.
+Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Monte Carlo paths, and optional LLM / heuristic analysis.
 
 Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
 
@@ -28,7 +28,7 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 - **Market News**: session-wide Yahoo tape (three-column grid); polls every 60s (`ZINTOPIA_NEWS_REFRESH_SEC`, or `ZINTOPIA_MARKET_NEWS_REFRESH_SEC`). **Breaking** only if the headline contains words such as breaking / just in / flash / developing / alert; **Alert** is a separate severe-phrase heuristic
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
-- **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (same knobs as [Portfolio Visualizer](https://portfoliovisualizer.com/monte-carlo-simulation): cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
+- **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
 - **LLM research dialog**: type a question or use the BUY / SELL / LONG CALL / LONG PUT starter, with macro context (SPY, QQQ, DIA, IWM, VIX) via OpenAI or Anthropic, then follow-ups in the same conversation. Requires a key; use **Stop** to cancel an in-flight reply.
 
@@ -100,7 +100,7 @@ This is research / simulation only, and **shares only** (no options). **Not fina
 
 ## Portfolio MC Simulation
 
-The **Portfolio MC Simulation** tab runs hypothetical monthly paths, modeled on [Portfolio Visualizer Monte Carlo](https://portfoliovisualizer.com/monte-carlo-simulation). It is not a forecast.
+The **Portfolio MC Simulation** tab runs hypothetical monthly paths. It is not a forecast.
 
 1. Open **Portfolio MC Simulation** in the header. The form is on top; the percentile chart and tables render below after you run.
 2. Choose an allocation: asset-class dropdowns plus a lazy portfolio (60/40, All Seasons, Core Four, and similar, mapped to ETFs such as VTI / BND), **Import portfolio** from a paper fund (weights from marked holdings + cash as SHV), or type free tickers.
