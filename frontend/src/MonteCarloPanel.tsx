@@ -203,8 +203,7 @@ export default function MonteCarloPanel() {
       <div className="mc-form-col">
         <div className="section-h">Portfolio MC Simulation</div>
         <p className="mc-lead muted">
-          Same knobs as Portfolio Visualizer Monte Carlo. Paths use monthly ETF/ticker history (Yahoo, Polygon
-          fallback). Hypothetical. Not financial advice.
+          Paths use monthly ETF/ticker history (Yahoo, Polygon fallback). Hypothetical. Not financial advice.
         </p>
 
         <div className="section-h">Simulation model</div>
