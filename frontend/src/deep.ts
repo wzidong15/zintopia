@@ -1,3 +1,29 @@
+export type OptionsAnalysis = {
+  expiry?: string | null;
+  dte?: number | null;
+  spot?: number | null;
+  atm_strike?: number | null;
+  atm_iv?: number | null;
+  expected_move?: number | null;
+  expected_move_pct?: number | null;
+  expected_low?: number | null;
+  expected_high?: number | null;
+  expected_move_basis?: string | null;
+  max_pain?: number | null;
+  call_oi?: number | null;
+  put_oi?: number | null;
+  oi_put_call?: number | null;
+  oi_by_strike?: { strike: number; call_oi: number; put_oi: number }[];
+  iv_samples?: number;
+  iv_samples_needed?: number;
+  iv_rank?: number | null;
+  iv_percentile?: number | null;
+  iv_low?: number | null;
+  iv_high?: number | null;
+  iv_first_sample?: string | null;
+  error?: string | null;
+};
+
 export type DeepAnalysis = {
   symbol: string;
   price?: number | null;
@@ -31,6 +57,7 @@ export type DeepAnalysis = {
       iv?: number | null;
       vol_oi?: number | null;
     }[];
+    analysis?: OptionsAnalysis | null;
   };
   congress: {
     buy_count?: number;

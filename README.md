@@ -29,6 +29,8 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
 - **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
+- **Options** (in the deep panel): ATM implied volatility, **IV rank** (from daily samples the app records locally in `~/.zintopia/iv_history.json`; shows `collecting` until 20 days exist), **expected move** from the ATM straddle, **max pain**, and put/call open interest by strike for the nearest monthly expiry, plus the unusual-volume table. Yahoo chain, ~15 minutes delayed. No options flow.
+- **Options strip** under the index strip: VIX9D / VIX / VIX3M / VIX6M term structure (contango / flat / backwardation), SKEW, and the CBOE daily total / equity / index put/call ratios (previous session; CBOE publishes the file after the close)
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
 - **LLM research dialog**: type a question or use the BUY / SELL / LONG CALL / LONG PUT starter, with macro context (SPY, QQQ, DIA, IWM, VIX) via OpenAI or Anthropic, then follow-ups in the same conversation. Requires a key; use **Stop** to cancel an in-flight reply.
 
@@ -94,7 +96,7 @@ Performance (NAV chart and marked-to-market P/L) refreshes every 30 seconds (`ZI
 | Day-gainers | Rotates into the top 3 US day-gainers, equal weight. Noisy compared with dual momentum or sector rotation. |
 | RSI mean reversion | Buys ~25% of cash when RSI < 30; sells when RSI > 70. No trend filter. |
 
-Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The watchlist is `watchlist.json` in that same directory. The Congress PTR cache is `congress_ptr.json`. Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
+Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo). The watchlist is `watchlist.json` in that same directory. The Congress PTR cache is `congress_ptr.json`, and daily ATM IV samples for IV rank are `iv_history.json`. Override with `ZINTOPIA_DATA_DIR`. Deleting a fund in the UI removes it. Restarting the app does not reset paper cash or trades.
 
 This is research / simulation only, and **shares only** (no options). **Not financial advice.** You can lose real money if you copy these ideas in a live account.
 
@@ -152,6 +154,8 @@ Full inventory (URLs, env keys, and **paid/subscription tiers** for each vendor)
 | Daily TA | `tradingview-ta` → `scanner.tradingview.com` | Same unsigned TV scanner; no TA API key |
 | Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance` on `query1`/`query2.finance.yahoo.com`). Official Yahoo public API was retired in 2017 | Yahoo Plus is a consumer site plan, not an API. Licensed vendors (Finnhub, Tiingo, …) are not used |
 | Market news | Yahoo RSS (`/news/rssindex` and GSPC headlines). Breaking is title-keyword only. Alert is a severe-phrase heuristic | Plus premium newsfeed is not these RSS URLs |
+| Options (IV, expected move, max pain, OI by strike) | Yahoo option chain via `yfinance` (same chain as Option movement). IV history is recorded locally, one sample per ticker per day | Polygon / Massive Options, Tradier, Unusual Whales are **not** used |
+| Options strip (VIX term, SKEW, put/call) | Yahoo `^VIX9D` / `^VIX` / `^VIX3M` / `^VIX6M` / `^SKEW` with `cdn.cboe.com` delayed quotes as fallback; CBOE daily market statistics JSON for put/call ratios | Free. CBOE DataShop / LiveVol are not used |
 | Senate / House PTR trades | Official STOCK Act: House Clerk `YYYYFD.zip` + PTR PDFs; Senate eFD (`efdsearch.senate.gov`). **Trades**, not live holdings; up to 45 days to file. Cache `~/.zintopia/congress_ptr.json` | Official feeds are free. Paid aggregators are not used |
 | LLM research / Vibe | `api.openai.com/v1/chat/completions` and/or `api.anthropic.com/v1/messages` | **API token billing** only. ChatGPT Plus / Claude Pro do **not** include these keys |
 | Chart widget | TradingView Lightweight Charts (draws bars we already fetched) | TV Supercharts subscription is unrelated |
@@ -181,7 +185,8 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `GET /api/screener` | Universe screen (sector, cap, PE, RSI, % change) |
 | `GET /api/ta/{symbol}` | Daily TA summary |
 | `GET /api/search?q=` | Symbol search |
-| `GET /api/deep/{symbol}` | Insiders, options, official House/Senate PTRs, news, forecast, heuristic suggestion |
+| `GET /api/deep/{symbol}` | Insiders, options (unusual volume + `analysis`: ATM IV, IV rank, expected move, max pain, OI by strike), official House/Senate PTRs, news, forecast, heuristic suggestion |
+| `GET /api/options-market` | VIX9D / VIX / VIX3M / VIX6M term structure, SKEW, CBOE daily put/call ratios (cached 15 min) |
 | `POST /api/llm-advice/{symbol}` | Start LLM research conversation (BUY/SELL/LONG CALL/LONG PUT) |
 | `POST /api/llm-advice/{symbol}/chat` | Follow-up in the same `conversation_id` |
 | `GET /api/portfolios` | Stock portfolio summaries (marked to market) |
@@ -206,6 +211,7 @@ backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
 backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
+backend/options_analytics.py  IV rank, expected move, max pain, OI ladder, VIX term + CBOE put/call
 backend/watchlist.py     Watchlist JSON (`~/.zintopia/watchlist.json`)
 backend/broker_import.py Parse read-only broker position CSV/TSV snapshots
 backend/llm_advice.py    OpenAI / Anthropic calls
@@ -216,7 +222,7 @@ Dockerfile               Multi-stage image (Vite build + FastAPI)
 docker-compose.yml       UI + API on port 8000; bind-mounts ~/.zintopia at /data
 .env.example             Key placeholders — copy to .env locally
 docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
-~/.zintopia/             Local paper funds, watchlist, PTR cache (not in git)
+~/.zintopia/             Local paper funds, watchlist, PTR cache, IV history (not in git)
 ```
 
 ## Secrets

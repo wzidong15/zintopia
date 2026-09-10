@@ -40,6 +40,7 @@ import congress_ptr
 import fundamentals as fundamentals_mod
 import llm_advice
 import newsfeed
+import options_analytics
 import ownership as ownership_mod
 import vibe_portfolio
 
@@ -2272,7 +2273,7 @@ def _empty_options(error: str | None = None) -> dict[str, Any]:
     }
 
 
-def _options_from_ticker(t: yf.Ticker) -> dict[str, Any]:
+def _options_from_ticker(t: yf.Ticker, spot: float | None = None) -> dict[str, Any]:
     try:
         expiries = list(t.options or [])
     except Exception as e:
@@ -2313,11 +2314,19 @@ def _options_from_ticker(t: yf.Ticker) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     chain_errors: list[str] = []
     used_expiry = expiries[0]
-    for expiry in expiries[:3]:
+    analysis_expiry = options_analytics.pick_analysis_expiry(expiries)
+    chains: dict[str, Any] = {}
+    wanted = list(expiries[:3])
+    if analysis_expiry and analysis_expiry not in wanted:
+        wanted.append(analysis_expiry)
+    for expiry in wanted:
         try:
             chain = t.option_chain(expiry)
         except Exception as e:
             chain_errors.append(f"{expiry}: {e}")
+            continue
+        chains[expiry] = chain
+        if expiry not in expiries[:3]:
             continue
         c_vol, calls = pack(getattr(chain, "calls", None), "call", expiry)
         p_vol, puts = pack(getattr(chain, "puts", None), "put", expiry)
@@ -2331,23 +2340,43 @@ def _options_from_ticker(t: yf.Ticker) -> dict[str, Any]:
         return _empty_options(f"Yahoo option chain empty ({detail})")
     pc = (put_vol / call_vol) if call_vol else None
     items = sorted(items, key=lambda x: x.get("volume") or 0, reverse=True)[:10]
+
+    analysis: dict[str, Any] = {}
+    if analysis_expiry and analysis_expiry in chains:
+        chain = chains[analysis_expiry]
+        try:
+            analysis = options_analytics.analyze_chain(
+                analysis_expiry,
+                getattr(chain, "calls", None),
+                getattr(chain, "puts", None),
+                spot,
+            )
+            analysis.update(options_analytics.record_iv_and_rank(t.ticker, analysis.get("atm_iv")))
+        except Exception as e:
+            analysis = {"expiry": analysis_expiry, "error": f"analysis failed: {e}"}
     return {
         "expiry": used_expiry,
         "call_volume": call_vol,
         "put_volume": put_vol,
         "put_call": pc,
         "items": items,
+        "analysis": analysis,
         "source": "yfinance",
     }
 
 
-def _options_block(t: yf.Ticker | str) -> dict[str, Any]:
+def _options_block(t: yf.Ticker | str, spot: float | None = None) -> dict[str, Any]:
     """Yahoo option chain. Always uses a dedicated Ticker — sharing one across threads
     races yfinance's session and often returns an empty chain (looks like 'no volume')."""
     symbol = (t if isinstance(t, str) else getattr(t, "ticker", None) or str(t)).strip().upper().split(":")[-1]
+    if spot is None:
+        try:
+            spot = _clean(getattr(_yf_ticker(symbol).fast_info, "last_price", None))
+        except Exception:
+            spot = None
     last = _empty_options("Yahoo options unavailable")
     for attempt in range(3):
-        last = _options_from_ticker(_yf_ticker(symbol))
+        last = _options_from_ticker(_yf_ticker(symbol), spot if isinstance(spot, (int, float)) else None)
         if last.get("expiry") or last.get("items") or last.get("call_volume") or last.get("put_volume"):
             return last
         if attempt < 2:
@@ -2573,6 +2602,21 @@ def _build_llm_context(yf_sym: str) -> dict[str, Any]:
             "call_volume": options.get("call_volume"),
             "put_volume": options.get("put_volume"),
             "notable": options.get("items", [])[:6],
+            "analysis": {
+                k: (options.get("analysis") or {}).get(k)
+                for k in (
+                    "expiry",
+                    "dte",
+                    "atm_iv",
+                    "iv_rank",
+                    "iv_percentile",
+                    "expected_move_pct",
+                    "expected_low",
+                    "expected_high",
+                    "max_pain",
+                    "oi_put_call",
+                )
+            },
             "error": options.get("error"),
         },
         "congress": {
@@ -2646,7 +2690,8 @@ def deep(symbol: str):
                 info = t.info or {}
             except Exception:
                 info = {}
-            return info, _insider_block(t), _options_block(yf_sym)
+            spot = _clean(info.get("regularMarketPrice") or info.get("currentPrice"))
+            return info, _insider_block(t), _options_block(yf_sym, spot if isinstance(spot, (int, float)) else None)
 
         def safe_quote():
             try:
@@ -2716,6 +2761,29 @@ def deep(symbol: str):
         return value
     except Exception as e:
         raise HTTPException(502, f"Deep analysis failed: {e}") from e
+
+
+@app.get("/api/options-market")
+def options_market():
+    """Market-wide options read: VIX term structure, SKEW, CBOE daily put/call ratios."""
+
+    def fetch():
+        return options_analytics.market_options(_yahoo_quote, _http_json)
+
+    try:
+        now = time.time()
+        hit = _cache.get("options-market")
+        if hit and isinstance(hit[1], dict):
+            complete = bool((hit[1].get("put_call") or {}).get("date")) and any(
+                p.get("price") is not None for p in (hit[1].get("vix") or {}).get("points", [])
+            )
+            if now - hit[0] < (15 * 60 if complete else 3 * 60):
+                return hit[1]
+        value = fetch()
+        _cache["options-market"] = (now, value)
+        return value
+    except Exception as e:
+        raise HTTPException(502, f"Options market failed: {e}") from e
 
 
 @app.get("/api/snapshot")

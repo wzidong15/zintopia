@@ -23,6 +23,8 @@ Zintopia 是研究界面，不是券商。**不构成投资建议。** 未登录
 | 日线技术评级 | `tradingview-ta` → `https://scanner.tradingview.com/.../scan` | 无 |
 | 资料、财务、持有人、空头、Form 4、期权、分析师目标、个股新闻 | Yahoo / `yfinance`（`query1` / `query2.finance.yahoo.com`） | 无 |
 | 市场新闻带 | Yahoo RSS | 无 |
+| 期权分析（平值 IV、IV rank、预期波动、最大痛点、按行权价 OI） | Yahoo 期权链（`yfinance`）；IV 样本本地记录 | 无 |
+| 期权条（VIX9D / VIX / VIX3M / VIX6M、SKEW、看跌看涨比） | Yahoo 指数代码，失败回退 `cdn.cboe.com` 延迟报价；CBOE 每日市场统计 JSON | 无 |
 | 10-K / 10-Q / 8-K 链接 | Yahoo `get_sec_filings()`（链接多为 EDGAR） | 无 |
 | 国会 PTR 交易 | 众议院书记官 ZIP/PDF + 参议院 eFD | 无 |
 | LLM 研究与 Vibe | OpenAI Chat Completions 和/或 Anthropic Messages | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
@@ -114,6 +116,17 @@ Breaking / Alert 只是标题启发式。Yahoo Plus 付费新闻流是网站功�
 | SEC EDGAR | 经 Yahoo filings 链接到 sec.gov | EDGAR 免费；彭博等付费库未用 |
 
 申报的是 **交易** 不是实时持仓，最多 45 天披露期。Quiver / Capitol Trades 等清洗源未接入。
+
+---
+
+## 9b. CBOE 公开数据（期权条）
+
+- **每日看跌看涨比：** `GET https://cdn.cboe.com/data/us/options/market_statistics/daily/{YYYY-MM-DD}_daily_options`，JSON 含 `ratios`（总、指数、个股、ETP、SPX+SPXW、VIX）与成交量 / 未平仓量合计。收盘后才发布，应用最多回溯一周取最近一份。
+- **延迟指数报价（仅回退）：** `https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json`（同样有 `_VIX9D`、`_VIX3M`、`_VIX6M`、`_SKEW`）。
+- **用于：** `GET /api/options-market`（缓存 15 分钟）。
+- **付费但未用：** CBOE DataShop、LiveVol、任何基于 OPRA 的期权流产品；Unusual Whales、Tradier、Polygon Options 也未接线。
+
+个股期权分析（平值 IV、预期波动、最大痛点、OI 阶梯）来自第 4 节的 Yahoo 期权链；IV rank 由应用每日写入 `~/.zintopia/iv_history.json` 的样本计算，不足 20 天显示 `collecting`。
 
 ---
 

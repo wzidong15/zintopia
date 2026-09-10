@@ -11,6 +11,7 @@ import type { DeepAnalysis } from "./deep";
 import type { Fundamentals, PeerList } from "./fundamentals";
 import OwnershipPanel, { type Ownership } from "./OwnershipPanel";
 import type { Bar, NewsItem, Profile, Quote, TA } from "./types";
+import { pcTone, structureTone, type OptionsMarket } from "./optionsMarket";
 import { defaultWatchSymbol, loadWatchlist, loadWatchSort, mergeWatchState, removeFromWatchlist, saveWatchlist, saveWatchSort, sortWatchlist, toggleWatchlistSymbol, watchSortFromId, watchSortId, WATCH_SORT_OPTIONS } from "./watchlist";
 import { getCachedQuote, partialFromSearch, rememberQuote, rememberQuotes } from "./quoteCache";
 import { fetchBars, getCachedBars, prefetchBars } from "./chartCache";
@@ -258,6 +259,25 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<number | null>(null);
   const [view, setView] = useState<"research" | "portfolios" | "montecarlo">("research");
+  const [optMarket, setOptMarket] = useState<OptionsMarket | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    const load = () => {
+      api
+        .optionsMarket()
+        .then((r) => {
+          if (live) setOptMarket(r);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = setInterval(load, 5 * 60_000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -790,6 +810,50 @@ export default function App() {
           </button>
         ))}
       </nav>
+      {optMarket && (
+        <div className="strip strip-options" title={optMarket.note || ""}>
+          <div className="opt-cell opt-label">
+            <span className="sym">Options</span>
+          </div>
+          {optMarket.vix.points.map((p) => (
+            <div key={p.symbol} className="opt-cell">
+              <span className="sym">{p.symbol}</span>
+              <span className="px">{fmt(p.price)}</span>
+              <span className={cls(p.change_pct)}>{pct(p.change_pct)}</span>
+            </div>
+          ))}
+          <div className="opt-cell">
+            <span className="sym">Term</span>
+            <span className={`px ${structureTone(optMarket.vix.structure)}`}>
+              {optMarket.vix.structure || "—"}
+            </span>
+            <span className="muted">
+              VIX/3M {optMarket.vix.vix_vix3m == null ? "—" : optMarket.vix.vix_vix3m.toFixed(2)}
+              {optMarket.vix.near_term_stress ? " · 9D > VIX" : ""}
+            </span>
+          </div>
+          <div className="opt-cell">
+            <span className="sym">SKEW</span>
+            <span className="px">{fmt(optMarket.vix.skew?.price, 1)}</span>
+            <span className={cls(optMarket.vix.skew?.change)}>
+              {optMarket.vix.skew?.change == null ? "" : `${optMarket.vix.skew.change >= 0 ? "+" : ""}${optMarket.vix.skew.change.toFixed(1)}`}
+            </span>
+          </div>
+          <div className="opt-cell opt-pc">
+            <span className="sym">CBOE P/C</span>
+            <span className={`px ${pcTone(optMarket.put_call.ratios.total)}`}>
+              total {fmt(optMarket.put_call.ratios.total)}
+            </span>
+            <span className={`px ${pcTone(optMarket.put_call.ratios.equity)}`}>
+              equity {fmt(optMarket.put_call.ratios.equity)}
+            </span>
+            <span className="px">index {fmt(optMarket.put_call.ratios.index)}</span>
+            <span className="muted">
+              {optMarket.put_call.date ? `${optMarket.put_call.date.slice(5)} close` : optMarket.put_call.error ? "unavailable" : ""}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="layout">
         <aside className="col">
