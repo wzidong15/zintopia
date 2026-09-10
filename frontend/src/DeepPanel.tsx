@@ -57,6 +57,9 @@ export default function DeepPanel({
   }
   if (!data) return null;
   const s = data.suggestion;
+  const an = data.options.analysis || null;
+  const ladder = an?.oi_by_strike || [];
+  const oiMax = Math.max(1, ...ladder.map((r) => Math.max(r.call_oi, r.put_oi)));
   return (
     <section className="deep" id="deep-analysis">
       <div className="section-h">Deep analysis · {data.symbol}</div>
@@ -108,22 +111,95 @@ export default function DeepPanel({
           </div>
         </article>
 
-        <article>
+        <article className="opt-card">
           <div className="section-h">
-            Option movement
+            Options
             <span className="muted">
-              next 3 expiries · P/C {data.options.put_call == null ? "—" : data.options.put_call.toFixed(2)}
+              {an?.expiry ? `${an.expiry}${an.dte != null ? ` · ${an.dte}d` : ""}` : "next 3 expiries"}
+              {" · vol P/C "}
+              {data.options.put_call == null ? "—" : data.options.put_call.toFixed(2)}
             </span>
           </div>
-          <div className="stats" style={{ gridTemplateColumns: "1fr 1fr", padding: "0 12px 8px" }}>
+          <div className="stats opt-stats">
             <div className="stat">
-              <div className="k">Call volume</div>
-              <div className="v up">{num(data.options.call_volume, 0)}</div>
+              <div className="k">ATM IV</div>
+              <div className="v">{an?.atm_iv == null ? "—" : `${(an.atm_iv * 100).toFixed(1)}%`}</div>
+              <div className="sub">{an?.atm_strike != null ? `strike ${num(an.atm_strike, 1)}` : "nearest monthly"}</div>
             </div>
             <div className="stat">
-              <div className="k">Put volume</div>
-              <div className="v down">{num(data.options.put_volume, 0)}</div>
+              <div className="k">IV rank</div>
+              <div className="v">
+                {an?.iv_rank == null
+                  ? "collecting"
+                  : `${an.iv_rank.toFixed(0)}`}
+              </div>
+              <div className="sub">
+                {an?.iv_rank == null
+                  ? `${an?.iv_samples ?? 0}/${an?.iv_samples_needed ?? 20} daily samples`
+                  : `pctile ${an.iv_percentile == null ? "—" : an.iv_percentile.toFixed(0)} · ${an.iv_samples ?? 0}d`}
+              </div>
             </div>
+            <div className="stat">
+              <div className="k">Expected move</div>
+              <div className="v">
+                {an?.expected_move_pct == null ? "—" : `±${an.expected_move_pct.toFixed(1)}%`}
+              </div>
+              <div className="sub">
+                {an?.expected_low != null && an?.expected_high != null
+                  ? `${num(an.expected_low, 2)} – ${num(an.expected_high, 2)}`
+                  : an?.expected_move_basis || "—"}
+              </div>
+            </div>
+            <div className="stat">
+              <div className="k">Max pain</div>
+              <div className="v">{an?.max_pain == null ? "—" : num(an.max_pain, 1)}</div>
+              <div className="sub">
+                {an?.max_pain != null && an?.spot
+                  ? `${(((an.max_pain - an.spot) / an.spot) * 100).toFixed(1)}% vs spot`
+                  : "—"}
+              </div>
+            </div>
+          </div>
+          {ladder.length > 0 && (
+            <div className="oi-ladder">
+              <div className="oi-head">
+                <span className="down">Put OI</span>
+                <span>Strike</span>
+                <span className="up">Call OI</span>
+              </div>
+              {ladder.map((r) => (
+                <div
+                  key={r.strike}
+                  className={`oi-row${r.strike === an?.atm_strike ? " atm" : ""}${r.strike === an?.max_pain ? " pain" : ""}`}
+                  title={`${num(r.strike, 1)} · ${fmtInt(r.put_oi)} puts · ${fmtInt(r.call_oi)} calls`}
+                >
+                  <div className="oi-side put">
+                    <span className="oi-n">{fmtInt(r.put_oi)}</span>
+                    <span className="oi-bar down" style={{ width: `${(r.put_oi / oiMax) * 100}%` }} />
+                  </div>
+                  <div className="oi-k">{num(r.strike, 1)}</div>
+                  <div className="oi-side call">
+                    <span className="oi-bar up" style={{ width: `${(r.call_oi / oiMax) * 100}%` }} />
+                    <span className="oi-n">{fmtInt(r.call_oi)}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="oi-foot muted">
+                OI put/call {an?.oi_put_call == null ? "—" : an.oi_put_call.toFixed(2)} · {fmtInt(an?.call_oi)} calls ·{" "}
+                {fmtInt(an?.put_oi)} puts · spot row highlighted
+                {an?.max_pain != null && ladder.some((r) => r.strike === an.max_pain)
+                  ? " · max pain underlined"
+                  : an?.max_pain != null
+                    ? ` · max pain ${num(an.max_pain, 1)} is outside this ladder`
+                    : ""}
+              </div>
+            </div>
+          )}
+          <div className="opt-sub-h">
+            Unusual volume
+            <span className="muted">
+              next 3 expiries · {num(data.options.call_volume, 0)} calls · {num(data.options.put_volume, 0)} puts
+            </span>
           </div>
           <table>
             <thead>

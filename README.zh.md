@@ -29,6 +29,8 @@
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
 - **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
+- **期权**（深度分析面板内）：平值隐含波动率、**IV rank**（由应用每日本地记录的样本计算，存于 `~/.zintopia/iv_history.json`；不足 20 天显示 `collecting`）、由平值跨式计算的 **预期波动**、**最大痛点**，以及最近月度到期的按行权价看跌/看涨未平仓量，外加异常成交量表。Yahoo 期权链，约延迟 15 分钟。没有期权流（flow）。
+- **期权条**（指数条下方）：VIX9D / VIX / VIX3M / VIX6M 期限结构（contango / flat / backwardation）、SKEW，以及 CBOE 每日 总 / 个股 / 指数 看跌看涨比（前一交易日；CBOE 收盘后发布）
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
 - **LLM 研究对话**：自行提问，或使用 BUY / SELL / LONG CALL / LONG PUT 快捷入口，并带上宏观背景（SPY、QQQ、DIA、IWM、VIX），经 OpenAI 或 Anthropic 回答，可在同一会话追问。需要密钥；用 **Stop** 取消进行中的回复。
 
@@ -152,6 +154,8 @@ cp .env.example .env
 | 日线技术分析 | `tradingview-ta` → `scanner.tradingview.com` | 无单独 TA 密钥 |
 | 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo（`yfinance`，`query1`/`query2.finance.yahoo.com`）。官方公开 API 已于 2017 关闭 | Plus 是消费者网站套餐，不是 API |
 | 市场新闻 | Yahoo RSS。Breaking 只看标题词。Alert 为严重措辞启发式 | Plus 付费新闻流不是这两条 RSS |
+| 期权（IV、预期波动、最大痛点、按行权价 OI） | Yahoo 期权链（`yfinance`，与 Option movement 同一条链）。IV 历史由本地每日记录 | Polygon / Massive Options、Tradier、Unusual Whales **未用** |
+| 期权条（VIX 期限、SKEW、看跌看涨比） | Yahoo `^VIX9D` / `^VIX` / `^VIX3M` / `^VIX6M` / `^SKEW`，失败时回退 `cdn.cboe.com` 延迟报价；看跌看涨比来自 CBOE 每日市场统计 JSON | 免费。CBOE DataShop / LiveVol 未用 |
 | 参众两院 PTR | 众议院书记官 ZIP/PDF；参议院 eFD。是 **交易** 不是实时持仓，最多 45 天披露。缓存 `~/.zintopia/congress_ptr.json` | 官方免费；商业清洗源未用 |
 | LLM / Vibe | `api.openai.com` 与/或 `api.anthropic.com` | **按 token 的 API 账单**。ChatGPT Plus / Claude Pro **不含** 这些密钥 |
 | 图组件 | TradingView Lightweight Charts（画已拉到的 K 线） | TV Supercharts 订阅无关 |
@@ -181,7 +185,8 @@ cp .env.example .env
 | `GET /api/screener` | 股票池筛选（行业、市值、PE、RSI、涨跌幅） |
 | `GET /api/ta/{symbol}` | 日线技术分析摘要 |
 | `GET /api/search?q=` | 代码搜索 |
-| `GET /api/deep/{symbol}` | 内部人、期权、官方参众两院 PTR、新闻、预测、启发式建议 |
+| `GET /api/deep/{symbol}` | 内部人、期权（异常成交量 + `analysis`：平值 IV、IV rank、预期波动、最大痛点、按行权价 OI）、官方参众两院 PTR、新闻、预测、启发式建议 |
+| `GET /api/options-market` | VIX9D / VIX / VIX3M / VIX6M 期限结构、SKEW、CBOE 每日看跌看涨比（缓存 15 分钟） |
 | `POST /api/llm-advice/{symbol}` | 开始 LLM 研究对话（BUY/SELL/LONG CALL/LONG PUT） |
 | `POST /api/llm-advice/{symbol}/chat` | 同一 `conversation_id` 追问 |
 | `GET /api/portfolios` | 股票组合摘要（盯市） |
@@ -206,6 +211,7 @@ backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
 backend/monte_carlo.py   组合蒙特卡洛（月度历史）
+backend/options_analytics.py  IV rank、预期波动、最大痛点、OI 阶梯、VIX 期限 + CBOE 看跌看涨比
 backend/watchlist.py     自选 JSON（`~/.zintopia/watchlist.json`）
 backend/broker_import.py 只读解析券商持仓 CSV/TSV 快照
 backend/llm_advice.py    OpenAI / Anthropic 调用
@@ -216,7 +222,7 @@ Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
 docker-compose.yml       界面与 API 在 8000 端口；把 ~/.zintopia 挂到 /data
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
-~/.zintopia/             本地模拟组合、自选、PTR 缓存（不进 git）
+~/.zintopia/             本地模拟组合、自选、PTR 缓存、IV 历史（不进 git）
 ```
 
 ## 密钥

@@ -4,6 +4,7 @@ import type { Ownership } from "./OwnershipPanel";
 import type { LlmAdviceChatResponse, LlmAdviceResponse, VibePortfolioChatResponse, VibePortfolioResponse } from "./llm";
 import type { Portfolio, PortfolioStrategyKind, PortfolioSummary } from "./portfolio";
 import type { McMeta, McResult } from "./monteCarlo";
+import type { OptionsMarket } from "./optionsMarket";
 import type { WatchSort } from "./watchlist";
 import type { Bar, NewsItem, Profile, Quote, TA } from "./types";
 
@@ -72,6 +73,7 @@ export const api = {
       };
     }>("/api/health"),
   indices: () => getJson<{ items: Quote[] }>("/api/indices"),
+  optionsMarket: () => getJson<OptionsMarket>("/api/options-market"),
   snapshot: () =>
     getJson<{
       indices: Quote[];

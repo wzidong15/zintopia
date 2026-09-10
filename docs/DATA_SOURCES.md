@@ -21,6 +21,8 @@ Zintopia is a research UI, not a broker. **Not financial advice.** Unsigned Trad
 | Daily TA rating | `tradingview-ta` → `https://scanner.tradingview.com/{screener}/scan` | none (unsigned) |
 | Profile, financials, holders, short interest, Form 4, options, analyst targets, ticker news | Yahoo via `yfinance` (`query1` / `query2.finance.yahoo.com`) | none |
 | Market news tape | Yahoo RSS | none |
+| Options analytics (ATM IV, IV rank, expected move, max pain, OI by strike) | Yahoo option chain via `yfinance`; IV samples recorded locally | none |
+| Options strip (VIX9D / VIX / VIX3M / VIX6M, SKEW, put/call ratios) | Yahoo index tickers, `cdn.cboe.com` delayed quotes fallback; CBOE daily market statistics JSON | none |
 | SEC 10-K / 10-Q / 8-K links | Yahoo `get_sec_filings()` (URLs usually point at EDGAR) | none |
 | Congress PTR trades | House Clerk ZIP/PDFs + Senate eFD | none |
 | LLM research + Vibe dialog | OpenAI Chat Completions and/or Anthropic Messages | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
@@ -213,7 +215,19 @@ Plus (~$20/mo) and Pro (~$100–$200/mo) do **not** include API quota.
 
 ---
 
-## 12. Chart library (not a market-data feed)
+## 12. CBOE public data (options strip)
+
+- **Daily put/call ratios:** `GET https://cdn.cboe.com/data/us/options/market_statistics/daily/{YYYY-MM-DD}_daily_options` — JSON with `ratios` (total, index, equity, ETP, SPX+SPXW, VIX) plus volume / open-interest totals. The file for a session appears **after the close**; the app walks back up to a week to find the latest one. The same data is on [cboe.com/us/options/market_statistics/daily](https://www.cboe.com/us/options/market_statistics/daily/).
+- **Delayed index quotes (fallback only):** `GET https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json` (also `_VIX9D`, `_VIX3M`, `_VIX6M`, `_SKEW`). Used when Yahoo does not return `^VIX9D` / `^VIX3M` / `^VIX6M` / `^SKEW`.
+- **Used for:** `GET /api/options-market` (cached 15 minutes; 3 minutes while incomplete).
+- **Delay:** put/call ratios are previous-session; VIX term points are Yahoo or CBOE delayed prints.
+- **Paid products that exist (not used):** CBOE DataShop historical files, LiveVol / Cboe Global Indices APIs, and any OPRA-based options flow product. Unusual Whales, Tradier, and Polygon Options are also **not** wired.
+
+Per-ticker options analytics (ATM IV, expected move, max pain, OI ladder) come from the **Yahoo** chain in section 4; IV rank is built from one ATM IV sample per ticker per day that the app writes to `~/.zintopia/iv_history.json`. Yahoo has no IV history, so rank shows `collecting` until 20 samples exist.
+
+---
+
+## 13. Chart library (not a market-data feed)
 
 - npm `lightweight-charts` (TradingView). Draws candles from `/api/history`.
 - Footer may still say “Quotes: TradingView scanner…” even when Polygon is first; the **delay disclaimer** is the part that must stay honest.
@@ -222,13 +236,14 @@ TradingView’s paid Supercharts subscription is unrelated to this widget.
 
 ---
 
-## 13. Local only (no vendor API)
+## 14. Local only (no vendor API)
 
 | Store | Path |
 |---|---|
 | Paper funds + imported snapshots | `~/.zintopia/portfolios.json` (`ZINTOPIA_DATA_DIR`) |
 | Watchlist | `~/.zintopia/watchlist.json` (browser `localStorage` is a cache; first load can copy an older origin) |
 | Congress PTR cache | `~/.zintopia/congress_ptr.json` |
+| ATM IV samples (IV rank) | `~/.zintopia/iv_history.json` (one sample per viewed ticker per day, ~260 kept) |
 | Broker import | User-supplied CSV/TSV parsed locally (`broker_import.py`) |
 
 ---
@@ -273,6 +288,7 @@ Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still 
 |---|---|
 | `backend/app.py` | Quotes, history, TV scanner, Polygon, Yahoo, Stooq, TA, search, deep |
 | `backend/newsfeed.py` | Yahoo ticker news + RSS tape |
+| `backend/options_analytics.py` | Chain analytics (IV rank, expected move, max pain, OI ladder) + VIX term / CBOE put/call strip |
 | `backend/ownership.py` | Holders, short interest, filings via Yahoo |
 | `backend/fundamentals.py` | Statements / EPS via Yahoo |
 | `backend/congress_ptr.py` | House + Senate PTR |
