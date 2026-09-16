@@ -17,6 +17,7 @@ Zintopia is a research UI, not a broker. **Not financial advice.** Unsigned Trad
 | OHLCV chart | Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates if Yahoo 429s | Polygon optional |
 | Paper strategies (SMA, RSI, 200-day, dual momentum, sector rotation) | Yahoo daily history (same cache as charts); Polygon daily aggs if Yahoo is rate-limited | Polygon optional |
 | Portfolio Monte Carlo | Yahoo monthly `range=max`; Polygon monthly aggregates if Yahoo 429s | Polygon optional |
+| Strategy backtester | Yahoo daily `10y` auto-adjusted closes (chart cache); Polygon daily aggregates if Yahoo 429s | Polygon optional |
 | Movers, screener, search, peers | TradingView scanner `POST https://scanner.tradingview.com/america/scan` | none (unsigned) |
 | Daily TA rating | `tradingview-ta` → `https://scanner.tradingview.com/{screener}/scan` | none (unsigned) |
 | Profile, financials, holders, short interest, Form 4, options, analyst targets, ticker news | Yahoo via `yfinance` (`query1` / `query2.finance.yahoo.com`) | none |
@@ -267,7 +268,7 @@ When the NYSE cash session is closed (America/New_York), paper marks overlay Yah
 2. On Yahoo rate limit or empty daily/weekly bars: Polygon aggregates (if key present)
 3. Else HTTP **429** (or last cached bars if we already had a good chart)
 
-Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still poll every 30s (`ZINTOPIA_CHART_REFRESH_SEC`). Daily/weekly ranges cache about **15 minutes**. Monte Carlo (`POST /api/monte-carlo`) uses Yahoo **monthly** history (`range=max`), with Polygon monthly aggregates if Yahoo 429s and a key is set.
+The backtester asks for `10y` daily bars (about ten years from Yahoo; a free Polygon plan returns about two) and keeps its own one-hour close cache per symbol. Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still poll every 30s (`ZINTOPIA_CHART_REFRESH_SEC`). Daily/weekly ranges cache about **15 minutes**. Monte Carlo (`POST /api/monte-carlo`) uses Yahoo **monthly** history (`range=max`), with Polygon monthly aggregates if Yahoo 429s and a key is set.
 
 ---
 
@@ -288,6 +289,7 @@ Intraday ranges (`1d` / `5d` / `1mo`) stay on a short cache so the UI can still 
 |---|---|
 | `backend/app.py` | Quotes, history, TV scanner, Polygon, Yahoo, Stooq, TA, search, deep |
 | `backend/newsfeed.py` | Yahoo ticker news + RSS tape |
+| `backend/backtest.py` | Strategy backtester on daily closes (grids, sleeves, rotation, metrics) |
 | `backend/options_analytics.py` | Chain analytics (IV rank, expected move, max pain, OI ladder) + VIX term / CBOE put/call strip |
 | `backend/ownership.py` | Holders, short interest, filings via Yahoo |
 | `backend/fundamentals.py` | Statements / EPS via Yahoo |

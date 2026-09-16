@@ -15,7 +15,7 @@
 
 本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟、蒙特卡洛路径，以及可选的 LLM / 启发式分析。
 
-启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
+启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。用 **Backtester** 在日线历史上用参数网格回放策略，或在同一组标的上比较所有策略。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
 
 这是研究界面，不是券商。**不构成投资建议。** 数据可能延迟、不完整或有误。
 
@@ -29,6 +29,7 @@
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
 - **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
+- **Backtester（策略回测）**：在最多十年的 Yahoo 日线收盘价上回放均线交叉、趋势过滤、RSI 均值回归、RSI + 趋势、动量轮动（双动量 / 行业轮动）或买入持有。参数网格（最多 300 组）、以 bps 计的佣金与滑点、按 Sharpe / CAGR / Calmar / Sortino / 回撤排名、与等权买入持有对比的权益曲线、预设、**Compare all strategies**，以及 **载入模拟基金的策略**。纯 numpy；仅为样本内研究。不构成投资建议。
 - **期权**（深度分析面板内）：平值隐含波动率、**IV rank**（由应用每日本地记录的样本计算，存于 `~/.zintopia/iv_history.json`；不足 20 天显示 `collecting`）、由平值跨式计算的 **预期波动**、**最大痛点**，以及最近月度到期的按行权价看跌/看涨未平仓量，外加异常成交量表。Yahoo 期权链，约延迟 15 分钟。没有期权流（flow）。
 - **期权条**（指数条下方）：VIX9D / VIX / VIX3M / VIX6M 期限结构（contango / flat / backwardation）、SKEW，以及 CBOE 每日 总 / 个股 / 指数 看跌看涨比（前一交易日；CBOE 收盘后发布）
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
@@ -100,6 +101,32 @@ docker compose up --build
 
 仅供研究 / 模拟，且 **只做正股**（无期权）。**不构成投资建议。** 若把这些想法用到实盘，可能亏真金。
 
+## Backtester（策略回测）
+
+**Backtester** 标签在 Yahoo 日线收盘价上回放规则。这是单一价格路径上的样本内研究，不是预测。
+
+1. 选一个 **预设**（SPY 的 Faber 趋势、SPY / EFA 双动量并回退 SHY、11 只行业 ETF 轮动、RSI(2) 回调、均线网格），**载入模拟基金的策略**，或选择策略后自行输入参数列表（`10, 20, 50`）。每个列表参数都会展开成网格。
+2. 设置标的（最多 12 个）、起止日期、初始资金、以 bps 计的佣金与滑点，以及排名指标。
+3. **Run grid** 对所选策略的每个组合排名。**Compare all strategies** 在同一组标的上按默认参数跑所有策略，先看哪类策略适合再调参。
+4. 点击排名中的一行即可与等权买入持有对比作图。前 12 名保留权益曲线和最近的已平仓交易。最近的运行会以标签形式留在结果上方，可来回切换。
+
+| 策略 | 规则 |
+|---|---|
+| Buy & hold | 首个交易日等权买入并持有。 |
+| SMA crossover | 快线高于慢线时持有；下穿或止损退出；止损后等待新的上穿。 |
+| Trend filter | 收盘价高于均线时持有，否则持现金（Faber）。 |
+| RSI mean reversion | Wilder RSI 低于入场阈值买入；高于退出阈值、触发止损或达到最长持有天数卖出。 |
+| RSI + trend filter | 同上，但只在趋势均线之上买入，收盘跌破均线即卖出。 |
+| Momentum rotation | 每月按上一收盘的历史涨幅排名，持有动量为正的前 N 名各 1/N；空缺份额给防御标的或现金。回看 0 = 1 / 3 / 6 个月收益平均。 |
+
+约定：前一收盘产生信号，下一收盘成交。止损按收盘价判断、再下一收盘成交，实际亏损可能超过阈值。按标的的策略把资金分成独立子账户，入场时全仓。轮动先卖后买，买入按扣除成本后的剩余现金定量。指标用起始日之前的历史预热（Yahoo 约返回十年，默认起始为 2017）。收盘价为 Yahoo 复权价。交易统计只计已平仓交易。Sharpe 与 Sortino 假设无风险利率为零、每年 252 个交易日。模拟基金的"日涨幅榜"策略依赖实时榜单，无法回放。
+
+引擎测试在合成价格上离线运行：
+
+```bash
+cd backend && .venv/bin/python -m unittest discover -s tests -v
+```
+
 ## Portfolio MC Simulation
 
 **Portfolio MC Simulation** 页按月度历史跑假设路径。不是预测。
@@ -150,6 +177,7 @@ cp .env.example .env
 | 行情 / 指数 / 自选 | 有密钥则 Polygon snapshot → TradingView scanner → yfinance → Stooq | Massive 美股：Basic $0 → Starter $29（15 分钟 + snapshot）→ Developer $79 → Advanced $199（实时）。TV 网站付费套餐与交易所数据包 **不会** 改变我们未登录的 scanner |
 | 图表 / 纸上策略 | Yahoo `yf.download`；日/周线在 Yahoo 429 时回退 Polygon aggregates | Yahoo Finance Plus（网站）**不能** 解锁 `yfinance` |
 | 组合蒙特卡洛 | Yahoo 月线 `range=max`；Yahoo 429 时 Polygon monthly | 与图表同一套 Yahoo/Polygon 历史。无额外密钥。 |
+| 策略回测 | Yahoo 日线 `10y` 复权收盘（与图表同一缓存）；Yahoo 429 时 Polygon 日线 | 同上。Polygon 免费档约两年，会缩短区间。 |
 | 涨跌榜 / 筛选 / 搜索 | TradingView scanner，授权后再试 Polygon 涨跌幅，再 Yahoo `day_gainers` 等 | 同行情行的 TV / Polygon |
 | 日线技术分析 | `tradingview-ta` → `scanner.tradingview.com` | 无单独 TA 密钥 |
 | 资料、个股新闻、财务、股权 / 申报、内部人、期权、分析师目标价 | Yahoo（`yfinance`，`query1`/`query2.finance.yahoo.com`）。官方公开 API 已于 2017 关闭 | Plus 是消费者网站套餐，不是 API |
@@ -199,6 +227,8 @@ cp .env.example .env
 | `POST /api/portfolios/{id}/tick` | 盯市 / 自动策略一步 |
 | `POST /api/portfolios/{id}/vibe` | 开始 Vibe 模拟组合对话（Yahoo + 日线技术分析，再 LLM） |
 | `POST /api/portfolios/{id}/vibe/chat` | 同一 `conversation_id` 追问 |
+| `GET /api/backtest/meta` | 策略定义（参数网格）、预设、模拟基金映射、上限 |
+| `POST /api/backtest` | 跑网格：`{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by}` → 排名、权益曲线、基准 |
 | `GET /api/monte-carlo/meta` | 资产类别 ETF 映射 + Lazy 组合 |
 | `POST /api/monte-carlo` | 跑蒙特卡洛（Yahoo 月线；可导入模拟基金或资产类别权重） |
 
@@ -211,6 +241,8 @@ backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
 backend/monte_carlo.py   组合蒙特卡洛（月度历史）
+backend/backtest.py      策略回测（numpy；网格、轮动、子账户）
+backend/tests/           离线引擎测试（unittest，合成价格）
 backend/options_analytics.py  IV rank、预期波动、最大痛点、OI 阶梯、VIX 期限 + CBOE 看跌看涨比
 backend/watchlist.py     自选 JSON（`~/.zintopia/watchlist.json`）
 backend/broker_import.py 只读解析券商持仓 CSV/TSV 快照

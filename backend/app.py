@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from tradingview_screener import Query, col
 from tradingview_ta import Interval, TA_Handler
 
+import backtest as backtest_mod
 import congress_ptr
 import fundamentals as fundamentals_mod
 import llm_advice
@@ -141,6 +142,7 @@ RANGE_TO_YF = {
     "1y": ("1y", "1d"),
     "2y": ("2y", "1d"),
     "5y": ("5y", "1wk"),
+    "10y": ("10y", "1d"),
     "max": ("max", "1mo"),
 }
 
@@ -1277,13 +1279,13 @@ def _polygon_history_bars(symbol: str, range: str) -> dict[str, Any]:
     """Daily/weekly OHLCV from Polygon when Yahoo is rate-limited."""
     if not POLYGON_KEY:
         raise RuntimeError("no polygon key")
-    if range not in ("3mo", "6mo", "1y", "2y", "5y", "max"):
+    if range not in ("3mo", "6mo", "1y", "2y", "5y", "10y", "max"):
         raise RuntimeError("polygon history is daily/weekly/monthly only")
     yf_sym = _yahoo_ticker_symbol(symbol)
     if yf_sym in ("VIX", "^VIX"):
         raise RuntimeError("VIX is not a Polygon stock ticker")
     timespan = "month" if range == "max" else ("week" if range == "5y" else "day")
-    lookback = {"3mo": 120, "6mo": 220, "1y": 420, "2y": 800, "5y": 1900, "max": 365 * 40}[range]
+    lookback = {"3mo": 120, "6mo": 220, "1y": 420, "2y": 800, "5y": 1900, "10y": 3700, "max": 365 * 40}[range]
     end = datetime.now(ZoneInfo("America/New_York")).date()
     start = end - timedelta(days=lookback)
     url = f"{POLYGON_BASE}/v2/aggs/ticker/{yf_sym}/range/1/{timespan}/{start.isoformat()}/{end.isoformat()}"
@@ -2851,6 +2853,8 @@ import monte_carlo as monte_carlo_mod
 
 monte_carlo_mod.configure(history=_history_bars_cached)
 app.include_router(monte_carlo_mod.router)
+backtest_mod.configure(history=_history_bars_cached)
+app.include_router(backtest_mod.router)
 
 
 def _vibe_research_pack(pid: str) -> dict[str, Any]:

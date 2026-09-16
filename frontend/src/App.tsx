@@ -3,6 +3,7 @@ import { api } from "./api";
 import Chart from "./Chart";
 import PortfolioPanel from "./PortfolioPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
+import BacktestPanel from "./BacktestPanel";
 import DeepPanel from "./DeepPanel";
 import LlmAdvicePanel from "./LlmAdvicePanel";
 import FundamentalsPanel from "./FundamentalsPanel";
@@ -258,7 +259,7 @@ export default function App() {
   >([]);
   const [err, setErr] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<number | null>(null);
-  const [view, setView] = useState<"research" | "portfolios" | "montecarlo">("research");
+  const [view, setView] = useState<"research" | "portfolios" | "montecarlo" | "backtest">("research");
   const [optMarket, setOptMarket] = useState<OptionsMarket | null>(null);
 
   useEffect(() => {
@@ -723,6 +724,9 @@ export default function App() {
           >
             Portfolio MC Simulation
           </button>
+          <button type="button" className={view === "backtest" ? "on" : ""} onClick={() => setView("backtest")}>
+            Backtester
+          </button>
         </div>
         <div className="search">
           <svg className="search-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden>
@@ -1106,6 +1110,14 @@ export default function App() {
         />
       )}
       {view === "montecarlo" && <MonteCarloPanel />}
+      {view === "backtest" && (
+        <BacktestPanel
+          onOpenSymbol={(s) => {
+            pick(s);
+            setView("research");
+          }}
+        />
+      )}
       <footer className="foot">
         <span>
           Quotes: TradingView scanner (unsigned ≈ 15m delay). Charts/news: Yahoo Finance. Stock
