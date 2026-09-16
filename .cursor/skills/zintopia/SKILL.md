@@ -27,7 +27,7 @@ Quotes (`/api/quote`, `/api/quotes`, `/api/indices`):
 2. TradingView scanner via `tradingview-screener` (~15m delay unsigned)
 3. Yahoo `yfinance` fallback, then Stooq
 
-Options analytics: `backend/options_analytics.py` on the Yahoo chain (no flow; no Unusual Whales / Tradier / Polygon Options). Charts: Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429. Profile, news, options, filings: Yahoo. Daily TA: `tradingview-ta`. Movers: TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo `day_gainers` / `day_losers` / `most_actives`. Congress PTRs: House Clerk + Senate eFD. LLM: OpenAI and/or Anthropic API keys (ChatGPT Plus / Claude Pro do not count).
+Backtester: `backend/backtest.py` (numpy sleeves + monthly rotation; do not add vectorbt/numba). Options analytics: `backend/options_analytics.py` on the Yahoo chain (no flow; no Unusual Whales / Tradier / Polygon Options). Charts: Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429. Profile, news, options, filings: Yahoo. Daily TA: `tradingview-ta`. Movers: TradingView scanner, then Polygon gainers/losers if the plan allows, then Yahoo `day_gainers` / `day_losers` / `most_actives`. Congress PTRs: House Clerk + Senate eFD. LLM: OpenAI and/or Anthropic API keys (ChatGPT Plus / Claude Pro do not count).
 
 Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay honest about delay. ChatGPT/Claude/Yahoo Plus/TradingView website subscriptions are not API keys for this process.
 
@@ -48,6 +48,8 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET /api/deep/{symbol}` | Insider (Yahoo Form 4), options (next 3 expiries + `analysis`: ATM IV, IV rank from `~/.zintopia/iv_history.json`, expected move, max pain, OI by strike for the nearest monthly), Congress PTRs (House Clerk + Senate eFD), news, forecast, research stance |
 | `GET /api/options-market` | VIX9D / VIX / VIX3M / VIX6M term structure + SKEW (Yahoo, CBOE delayed fallback) and CBOE daily put/call ratios; rendered as a strip under the index strip |
 | `GET/PUT /api/watchlist` | Watchlist symbols + sort (`~/.zintopia/watchlist.json`) |
+| `GET /api/backtest/meta` | Backtester strategy specs, presets, paper-fund mapping (`backend/backtest.py`) |
+| `POST /api/backtest` | Grid backtest on Yahoo `10y` daily closes; numpy engine, no vectorbt. Tests: `backend/tests` |
 | `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios for MC |
 | `POST /api/monte-carlo` | Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |
 | `GET/POST /api/portfolios` | Stock paper funds (shares only, no options) |

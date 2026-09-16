@@ -13,9 +13,9 @@
 
 # Zintopia
 
-Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Monte Carlo paths, and optional LLM / heuristic analysis.
+Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Monte Carlo paths, a strategy backtester, and optional LLM / heuristic analysis.
 
-Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
+Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Use **Backtester** to replay a strategy over daily history with a parameter grid, or compare every strategy on the same symbols. Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
 
 This is a research UI, not a broker. **Not financial advice.** Data can be delayed, incomplete, or wrong.
 
@@ -29,6 +29,7 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
 - **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
+- **Backtester**: replay SMA crossover, trend filter, RSI mean reversion, RSI + trend, momentum rotation (dual momentum / sector rotation), or buy & hold over up to ten years of Yahoo daily closes. Parameter grids (up to 300 combinations), commission and slippage in bps, ranking by Sharpe / CAGR / Calmar / Sortino / drawdown, equity curves against equal-weight buy & hold, presets, **Compare all strategies**, and **load a paper fund's strategy**. Pure numpy; in-sample research only. Not financial advice.
 - **Options** (in the deep panel): ATM implied volatility, **IV rank** (from daily samples the app records locally in `~/.zintopia/iv_history.json`; shows `collecting` until 20 days exist), **expected move** from the ATM straddle, **max pain**, and put/call open interest by strike for the nearest monthly expiry, plus the unusual-volume table. Yahoo chain, ~15 minutes delayed. No options flow.
 - **Options strip** under the index strip: VIX9D / VIX / VIX3M / VIX6M term structure (contango / flat / backwardation), SKEW, and the CBOE daily total / equity / index put/call ratios (previous session; CBOE publishes the file after the close)
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
@@ -100,6 +101,32 @@ Funds are stored locally in `~/.zintopia/portfolios.json` (outside the git repo)
 
 This is research / simulation only, and **shares only** (no options). **Not financial advice.** You can lose real money if you copy these ideas in a live account.
 
+## Backtester
+
+The **Backtester** tab replays a rule over Yahoo daily closes. It is in-sample research on one price path, not a forecast.
+
+1. Pick a **preset** (Faber trend on SPY, dual momentum SPY / EFA with SHY, sector rotation over the 11 sector ETFs, RSI(2) pullbacks, an SMA grid), load a **paper fund's strategy**, or choose a strategy and type your own parameter lists (`10, 20, 50`). Every list-valued parameter is expanded into a grid.
+2. Set symbols (max 12), start / end, initial cash, commission and slippage in basis points, and the ranking key.
+3. **Run grid** ranks every combination of the chosen strategy. **Compare all strategies** runs each strategy at its defaults on the same symbols so you can see which family suits them before tuning.
+4. Click a row in the ranking to chart it against equal-weight buy & hold. The top 12 runs keep an equity curve and their last closed trades. Recent runs stay as chips above the results so you can flip between them.
+
+| Strategy | Rule |
+|---|---|
+| Buy & hold | Equal weight on the first bar, hold. |
+| SMA crossover | Long while fast SMA > slow SMA; exit on the cross down or a stop; after a stop wait for a fresh cross up. |
+| Trend filter | Long while close > SMA, cash otherwise (Faber). |
+| RSI mean reversion | Buy when Wilder RSI < entry; sell when RSI > exit, on a stop, or after max hold days. |
+| RSI + trend filter | Same, but only buys above the trend SMA and sells when the close drops under it. |
+| Momentum rotation | Monthly: rank by trailing return at the prior close, hold the top N with positive momentum at 1/N; empty slots go to the defensive symbol or cash. Lookback 0 = average of 1 / 3 / 6-month returns. |
+
+Conventions: signals at the previous close fill at the next close. Stops are observed on the close and filled at the following close, so the realised loss can exceed the threshold. Per-symbol strategies split cash into independent sleeves that go all-in on entry. Rotation sells first, then sizes buys to the cash left after costs. Indicators warm up on history before the start date (Yahoo returns about ten years, so the default start is 2017). Closes are Yahoo auto-adjusted. Trade statistics count closed trades only. Sharpe and Sortino assume a zero risk-free rate over 252 trading days. The paper fund's day-gainers strategy depends on a live movers board and cannot be replayed.
+
+Engine tests run offline on synthetic prices:
+
+```bash
+cd backend && .venv/bin/python -m unittest discover -s tests -v
+```
+
 ## Portfolio MC Simulation
 
 The **Portfolio MC Simulation** tab runs hypothetical monthly paths. It is not a forecast.
@@ -150,6 +177,7 @@ Full inventory (URLs, env keys, and **paid/subscription tiers** for each vendor)
 | Quotes / indices / watchlist | Polygon snapshot (if keyed) → TradingView scanner → yfinance → Stooq | Massive stocks: Basic $0 → Starter $29 (15m + snapshot) → Developer $79 → Advanced $199 (realtime). TV website Essential–Ultimate and exchange data packages do **not** change our unsigned scanner. |
 | Charts / paper strategies | Yahoo `yf.download`; daily/weekly bars fall back to Polygon aggregates on Yahoo 429 | Yahoo Finance Plus (Bronze/Silver/Gold, website only) does **not** unlock `yfinance`. Polygon history needs a plan that allows aggregates. |
 | Portfolio Monte Carlo | Yahoo monthly `range=max`; Polygon monthly aggregates on Yahoo 429 | Same Yahoo/Polygon history row as charts. No extra key. |
+| Backtester | Yahoo daily `10y` auto-adjusted closes (same history cache as charts); Polygon daily aggregates on Yahoo 429 | Same row. A free Polygon plan returns about two years, which shortens the window. |
 | Movers / screener / search | TradingView scanner, then Polygon gainers/losers if authorized, then Yahoo `day_gainers` / `day_losers` / `most_actives` | Same TV + Polygon rows as quotes |
 | Daily TA | `tradingview-ta` → `scanner.tradingview.com` | Same unsigned TV scanner; no TA API key |
 | Profile, ticker news, financials, ownership / filings, insiders, options, analyst targets | Yahoo Finance (`yfinance` on `query1`/`query2.finance.yahoo.com`). Official Yahoo public API was retired in 2017 | Yahoo Plus is a consumer site plan, not an API. Licensed vendors (Finnhub, Tiingo, …) are not used |
@@ -173,7 +201,7 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `GET /api/quote/{symbol}` | One quote |
 | `GET /api/quotes?symbols=AAPL,MSFT` | Watchlist |
 | `GET /api/movers?kind=gainers\|losers\|active` | US stocks |
-| `GET /api/history/{symbol}?range=1h\|3h\|1d\|5d\|1mo\|3mo\|6mo\|1y\|5y\|max` | OHLCV (`max` is monthly for Monte Carlo) |
+| `GET /api/history/{symbol}?range=1h\|3h\|1d\|5d\|1mo\|3mo\|6mo\|1y\|2y\|5y\|10y\|max` | OHLCV (`10y` is daily for the backtester, `max` is monthly for Monte Carlo) |
 | `GET /api/watchlist` | Watchlist symbols + sort (`~/.zintopia/watchlist.json`) |
 | `PUT /api/watchlist` | Save watchlist (shared with Docker) |
 | `GET /api/profile/{symbol}` | Company profile (includes beta, float, short interest when Yahoo has it) |
@@ -199,6 +227,8 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `POST /api/portfolios/{id}/tick` | Mark-to-market / auto strategy step |
 | `POST /api/portfolios/{id}/vibe` | Start Vibe paper-fund conversation (Yahoo + daily TA, then LLM) |
 | `POST /api/portfolios/{id}/vibe/chat` | Follow-up on the same `conversation_id` |
+| `GET /api/backtest/meta` | Strategy specs (parameter grids), presets, paper-fund mapping, limits |
+| `POST /api/backtest` | Run a grid: `{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by}` → ranked runs, equity curves, benchmark |
 | `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios |
 | `POST /api/monte-carlo` | Run Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |
 
@@ -211,6 +241,8 @@ backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
 backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
+backend/backtest.py      Strategy backtester (numpy; grids, rotation, sleeves)
+backend/tests/           Offline engine tests (unittest, synthetic prices)
 backend/options_analytics.py  IV rank, expected move, max pain, OI ladder, VIX term + CBOE put/call
 backend/watchlist.py     Watchlist JSON (`~/.zintopia/watchlist.json`)
 backend/broker_import.py Parse read-only broker position CSV/TSV snapshots

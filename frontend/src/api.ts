@@ -5,6 +5,7 @@ import type { LlmAdviceChatResponse, LlmAdviceResponse, VibePortfolioChatRespons
 import type { Portfolio, PortfolioStrategyKind, PortfolioSummary } from "./portfolio";
 import type { McMeta, McResult } from "./monteCarlo";
 import type { OptionsMarket } from "./optionsMarket";
+import type { BtMeta, BtResult } from "./backtest";
 import type { WatchSort } from "./watchlist";
 import type { Bar, NewsItem, Profile, Quote, TA } from "./types";
 
@@ -188,5 +189,16 @@ export const api = {
       signal,
     ),
   monteCarloMeta: () => getJson<McMeta>("/api/monte-carlo/meta"),
+  backtestMeta: () => getJson<BtMeta>("/api/backtest/meta"),
+  runBacktest: (body: {
+    symbols: string[];
+    start: string;
+    end: string | null;
+    strategies: { kind: string; params: Record<string, unknown> }[];
+    initial_cash: number;
+    fees_bps: number;
+    slippage_bps: number;
+    rank_by: string;
+  }) => sendJson<BtResult>("/api/backtest", "POST", body),
   runMonteCarlo: (body: object) => sendJson<McResult>("/api/monte-carlo", "POST", body),
 };
