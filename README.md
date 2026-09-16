@@ -160,6 +160,10 @@ cp .env.example .env
 | `ZINTOPIA_DATA_DIR` | Local JSON dir for paper funds, watchlist, and the Congress PTR cache (default `~/.zintopia`). Inside Docker this is `/data`. |
 | `ZINTOPIA_HOST_DATA_DIR` | Host path Compose bind-mounts at `/data` (default `~/.zintopia`). |
 | `ZINTOPIA_HTTP_POOL_SIZE` | Keep-alive connection pool for outbound quote HTTP (default `20`, clamp 2–128). |
+| `ZINTOPIA_QUOTE_HTTP_TIMEOUT` | Per-request timeout in seconds for quote sources (default `6`). |
+| `ZINTOPIA_CONGRESS_TTL_SEC` | How long the House / Senate PTR cache is reused before a refresh (default `43200` = 12 hours). |
+| `ZINTOPIA_CONGRESS_LOOKBACK_DAYS` | How far back PTR filings are fetched (default `120`, minimum 30). |
+| `ZINTOPIA_STATIC_DIR` | Docker only: folder of the built UI that FastAPI serves (set to `/app/ui` in the image; leave unset with `./start.sh`). |
 | `POLYGON_API_KEY` or `MASSIVE_API_KEY` | Last-trade snapshots (realtime when the plan allows) |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM research and Vibe dialogs (default model `gpt-4.1`) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | LLM research and Vibe dialogs (default `claude-opus-4-20250514`) |
@@ -241,6 +245,8 @@ backend/app.py           FastAPI app
 backend/newsfeed.py      Yahoo ticker news + market RSS tape
 backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
+backend/fundamentals.py  Income, cash flow, balance sheet, EPS vs estimate (Yahoo)
+backend/vibe_portfolio.py Vibe paper-fund research pack + heuristic review
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
 backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
 backend/backtest.py      Strategy backtester (numpy; grids, rotation, sleeves)
@@ -255,7 +261,10 @@ start.sh                 Dev launcher (loads .env if present)
 Dockerfile               Multi-stage image (Vite build + FastAPI)
 docker-compose.yml       UI + API on port 8000; bind-mounts ~/.zintopia at /data
 .env.example             Key placeholders — copy to .env locally
-docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
+docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier (中文: DATA_SOURCES.zh.md)
+README.zh.md             This file in Chinese
+check-api.sh             Curl smoke check for a running API
+.cursor/skills/          Editor skill with API and UI conventions
 ~/.zintopia/             Local paper funds, watchlist, PTR cache, IV history (not in git)
 ```
 

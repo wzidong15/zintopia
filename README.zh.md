@@ -160,6 +160,10 @@ cp .env.example .env
 | `ZINTOPIA_DATA_DIR` | 模拟组合、自选与国会 PTR 缓存的本地 JSON 目录（默认 `~/.zintopia`）。Docker 内为 `/data`。 |
 | `ZINTOPIA_HOST_DATA_DIR` | Compose 挂到 `/data` 的主机路径（默认 `~/.zintopia`）。 |
 | `ZINTOPIA_HTTP_POOL_SIZE` | 出站行情 HTTP 的 keep-alive 连接池（默认 `20`，限制 2–128）。 |
+| `ZINTOPIA_QUOTE_HTTP_TIMEOUT` | 行情源单次请求超时秒数（默认 `6`）。 |
+| `ZINTOPIA_CONGRESS_TTL_SEC` | 参众两院 PTR 缓存复用时长，超过后刷新（默认 `43200` = 12 小时）。 |
+| `ZINTOPIA_CONGRESS_LOOKBACK_DAYS` | PTR 申报回溯天数（默认 `120`，最少 30）。 |
+| `ZINTOPIA_STATIC_DIR` | 仅 Docker：FastAPI 托管的前端构建目录（镜像中为 `/app/ui`；`./start.sh` 不要设置）。 |
 | `POLYGON_API_KEY` 或 `MASSIVE_API_KEY` | 最新成交快照（套餐允许时为实时） |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM 研究与 Vibe 对话（默认模型 `gpt-4.1`） |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | LLM 研究与 Vibe 对话（默认 `claude-opus-4-20250514`） |
@@ -241,6 +245,8 @@ backend/app.py           FastAPI 应用
 backend/newsfeed.py      Yahoo 个股新闻 + 市场 RSS 头条
 backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
+backend/fundamentals.py  利润表、现金流、资产负债表、EPS 与预期（Yahoo）
+backend/vibe_portfolio.py Vibe 模拟基金研究包 + 启发式点评
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
 backend/monte_carlo.py   组合蒙特卡洛（月度历史）
 backend/backtest.py      策略回测（numpy；网格、轮动、子账户）
@@ -256,6 +262,9 @@ Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
 docker-compose.yml       界面与 API 在 8000 端口；把 ~/.zintopia 挂到 /data
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
+README.md                本文件的英文版
+check-api.sh             对运行中的 API 做 curl 冒烟检查
+.cursor/skills/          编辑器技能文件，记录 API 与界面约定
 ~/.zintopia/             本地模拟组合、自选、PTR 缓存、IV 历史（不进 git）
 ```
 
