@@ -2937,8 +2937,24 @@ def _mount_ui() -> None:
     if root is None or not root.is_dir():
         return
     from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException as StarletteHTTPException
 
-    app.mount("/", StaticFiles(directory=str(root), html=True), name="ui")
+    class SpaStaticFiles(StaticFiles):
+        """Serve index.html for client-side routes (/portfolio, /monte-carlo, /backtest, ...).
+
+        Real files and anything that looks like one (has an extension) still 404 when missing,
+        and /api/* is handled by the routes registered above this mount."""
+
+        async def get_response(self, path: str, scope):  # type: ignore[override]
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as e:
+                last = path.rsplit("/", 1)[-1]
+                if e.status_code == 404 and "." not in last and not path.startswith("api/"):
+                    return await super().get_response("index.html", scope)
+                raise
+
+    app.mount("/", SpaStaticFiles(directory=str(root), html=True), name="ui")
 
 
 _mount_ui()

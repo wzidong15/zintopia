@@ -122,7 +122,7 @@ class WeightTests(unittest.TestCase):
         bench = 1000 * np.mean(closes / closes[0], axis=1)
         np.testing.assert_allclose(eq, bench, rtol=1e-9)
         self.assertEqual(trades, [])
-        self.assertAlmostEqual(exposure, 1.0)
+        self.assertAlmostEqual(float(exposure.mean()), 1.0)
 
     def test_rebalance_cannot_overspend(self):
         closes = np.array([[100.0, 100.0], [100.0, 100.0], [100.0, 100.0]])
@@ -148,7 +148,7 @@ class CandidateTests(unittest.TestCase):
         )
         self.assertAlmostEqual(eq[-1], 1000 * self.up[-1] / self.up[300], places=6)
         self.assertEqual(trades, [])  # never leaves UP
-        self.assertAlmostEqual(exposure, 1.0)
+        self.assertAlmostEqual(float(exposure.mean()), 1.0)
 
     def test_momentum_rotation_falls_back_to_defensive(self):
         df = frame({"A": self.down, "B": self.down * 0.9, "CASH": np.full(700, 100.0)})
@@ -164,7 +164,7 @@ class CandidateTests(unittest.TestCase):
             cash0=1000, fees=0, slip=0, trade_symbols=["DOWN"],
         )
         self.assertAlmostEqual(eq[-1], 1000.0)
-        self.assertAlmostEqual(exposure, 0.0)
+        self.assertAlmostEqual(float(exposure.mean()), 0.0)
 
     def test_warmup_uses_history_before_start(self):
         # start at bar 300 with a 200-bar SMA: the ramp is above its SMA before the window,
@@ -173,7 +173,7 @@ class CandidateTests(unittest.TestCase):
             self.df, 300, "trend_sma", {"window": 200, "stop_loss": 0},
             cash0=1000, fees=0, slip=0, trade_symbols=["UP"],
         )
-        self.assertAlmostEqual(exposure, 1.0)
+        self.assertAlmostEqual(float(exposure.mean()), 1.0)
         self.assertAlmostEqual(eq[-1], 1000 * self.up[-1] / self.up[300], places=6)
 
     def test_sma_cross_grid_skips_fast_ge_slow(self):
@@ -203,3 +203,64 @@ class CandidateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WalkForwardTests(unittest.TestCase):
+    def _runs(self, n: int):
+        dates = business_days(n)
+        # run A: strong early, flat late. run B: flat early, strong late. Both start at 1000.
+        a = np.concatenate([np.linspace(1000, 2000, n // 2), np.full(n - n // 2, 2000.0)])
+        b = np.concatenate([np.full(n // 2, 1000.0), np.linspace(1000, 2000, n - n // 2)])
+        mk = lambda i, eq: {  # noqa: E731
+            "id": i, "label": i, "strategy_label": "s", "_equity": eq, "_trades": [],
+            "_exposure": np.ones(n), "cagr": 0.0, "sharpe": 0.0,
+        }
+        return dates, [mk("A", a), mk("B", b)]
+
+    def test_fold_bounds_cover_the_rest_of_the_window(self):
+        cfg = bt.WalkForward(folds=4, train_pct=50, mode="anchored")
+        train0, folds = bt._fold_bounds(1000, cfg)
+        self.assertEqual(train0, 500)
+        self.assertEqual(folds[0][0], 500)
+        self.assertEqual(folds[-1][1], 1000)
+        self.assertEqual(sum(b - a for a, b in folds), 500)
+
+    def test_too_short_window_is_rejected(self):
+        with self.assertRaises(HTTPException):
+            bt._fold_bounds(150, bt.WalkForward(folds=4, train_pct=50))
+
+    def test_anchored_selection_uses_training_slice_only(self):
+        dates, runs = self._runs(1000)
+        bench = np.linspace(1000, 1500, 1000)
+        wf = bt.walk_forward(runs, dates, bench, 1000.0, "total_return", bt.WalkForward(folds=2, train_pct=50, mode="anchored"))
+        # fold 1 trains on bars 0-499 where A rose and B was flat -> picks A, which then goes flat OOS
+        self.assertEqual(wf["segments"][0]["chosen_id"], "A")
+        self.assertAlmostEqual(wf["segments"][0]["oos"]["total_return"], 0.0, places=6)
+        # fold 2 trains on bars 0-749: A +100%, B +~50% -> still A under anchored total return
+        self.assertEqual(wf["segments"][1]["chosen_id"], "A")
+        self.assertEqual(wf["oos_start"], dates[500].isoformat())
+        curve = [v for v in wf["oos_equity"] if v is not None]
+        self.assertEqual(len(curve), 500)
+        self.assertAlmostEqual(curve[0], 1000.0)
+        self.assertAlmostEqual(wf["oos"]["total_return"], 0.0, places=6)
+        self.assertFalse(wf["segments"][0]["beat_benchmark"])
+        self.assertEqual(wf["folds_beating_benchmark"], 0)
+
+    def test_rolling_selection_switches_to_recent_winner(self):
+        dates, runs = self._runs(1000)
+        bench = np.full(1000, 1000.0)
+        wf = bt.walk_forward(runs, dates, bench, 1000.0, "total_return", bt.WalkForward(folds=2, train_pct=50, mode="rolling"))
+        # fold 2 trains on bars 250-749 only: A +33% (500->? flat after 500), B +50% -> picks B, which keeps rising OOS
+        self.assertEqual(wf["segments"][1]["chosen_id"], "B")
+        self.assertGreater(wf["segments"][1]["oos"]["total_return"], 0)
+        self.assertEqual(wf["distinct_selections"], 2)
+        self.assertGreater(wf["oos"]["total_return"], 0)
+
+    def test_stitched_curve_chains_fold_growth(self):
+        dates, runs = self._runs(1000)
+        bench = np.full(1000, 1000.0)
+        wf = bt.walk_forward(runs, dates, bench, 1000.0, "total_return", bt.WalkForward(folds=2, train_pct=50, mode="rolling"))
+        curve = [v for v in wf["oos_equity"] if v is not None]
+        b = runs[1]["_equity"]
+        expected_end = 1000.0 * (b[999] / b[750])  # fold 1 flat (A), fold 2 B's growth
+        self.assertAlmostEqual(curve[-1], expected_end, places=1)

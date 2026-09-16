@@ -193,6 +193,12 @@ class BtStrategy(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class WalkForward(BaseModel):
+    folds: int = Field(default=4, ge=2, le=8)
+    train_pct: float = Field(default=50, ge=20, le=80)
+    mode: Literal["anchored", "rolling"] = "anchored"
+
+
 class BtBody(BaseModel):
     symbols: list[str] = Field(default_factory=lambda: ["SPY"], min_length=1, max_length=MAX_SYMBOLS)
     start: str = "2017-01-01"
@@ -203,6 +209,7 @@ class BtBody(BaseModel):
     slippage_bps: float = Field(default=10, ge=0, le=200)
     rank_by: RankKey = "sharpe"
     max_runs: int = Field(default=MAX_RUNS, ge=1, le=MAX_RUNS)
+    walk_forward: WalkForward | None = None
 
 
 # --------------------------------------------------------------------------- helpers
@@ -448,15 +455,17 @@ def simulate_weights(
     cash0: float,
     fees: float,
     slip: float,
-) -> tuple[np.ndarray, list[dict[str, Any]], float]:
-    """Rebalance to target weights on scheduled bars (sells first, buys sized to remaining cash)."""
+) -> tuple[np.ndarray, list[dict[str, Any]], np.ndarray]:
+    """Rebalance to target weights on scheduled bars (sells first, buys sized to remaining cash).
+
+    Returns equity, closed trades, and the per-bar invested fraction."""
     n, m = closes.shape
     equity = np.empty(n)
     shares = np.zeros(m)
     cost_basis = np.zeros(m)  # total cost of the open position per symbol
     cash = float(cash0)
     trades: list[dict[str, Any]] = []
-    exposure_sum = 0.0
+    exposure = np.zeros(n)
     for i in range(n):
         px = closes[i]
         w = schedule.get(i)
@@ -497,14 +506,16 @@ def simulate_weights(
                 cash = 0.0
         pos_val = float(np.dot(shares, px))
         equity[i] = cash + pos_val
-        exposure_sum += pos_val / equity[i] if equity[i] > 0 else 0.0
-    return equity, trades, exposure_sum / n if n else 0.0
+        exposure[i] = pos_val / equity[i] if equity[i] > 0 else 0.0
+    return equity, trades, exposure
 
 
 # --------------------------------------------------------------------------- metrics
 
 
-def metrics(equity: np.ndarray, dates: list[date], trades: list[dict[str, Any]], exposure: float, cash0: float) -> dict[str, Any]:
+def metrics(equity: np.ndarray, dates: list[date], trades: list[dict[str, Any]], exposure: float | np.ndarray, cash0: float) -> dict[str, Any]:
+    if isinstance(exposure, np.ndarray):
+        exposure = float(exposure.mean()) if len(exposure) else 0.0
     eq = np.asarray(equity, dtype=float)
     n = len(eq)
     if n < 2 or cash0 <= 0:
@@ -616,7 +627,8 @@ def run_candidate(
     fees: float,
     slip: float,
     trade_symbols: list[str],
-) -> tuple[np.ndarray, list[dict[str, Any]], float]:
+) -> tuple[np.ndarray, list[dict[str, Any]], np.ndarray]:
+    """Equity, closed trades, and per-bar invested fraction for one parameter combination."""
     spec = _SPEC_BY_ID[sid]
     stop = float(combo.get("stop_loss", 0) or 0) / 100.0
     if spec["group"] == "per_symbol":
@@ -624,7 +636,7 @@ def run_candidate(
         sleeve_cash = cash0 / n_sleeves
         equity_sum: np.ndarray | None = None
         trades: list[dict[str, Any]] = []
-        exposure = 0.0
+        exposure: np.ndarray | None = None
         for j, sym in enumerate(trade_symbols):
             x = close_full[sym].to_numpy(dtype=float)
             entry_after_stop = None
@@ -667,14 +679,14 @@ def run_candidate(
             )
             drop = start_idx - s0
             eq = eq[drop:]
-            ex = float(held[drop:].mean()) if len(held) > drop else 0.0
+            ex = held[drop:].astype(float) / n_sleeves
             # the prior bar is only a signal source; no fill can happen on it (i == 0 in the sleeve)
             for t in tr:
                 t["symbol"] = sym
                 t["entry"] -= drop
                 t["exit"] -= drop
             trades.extend(tr)
-            exposure += ex / n_sleeves
+            exposure = ex if exposure is None else exposure + ex
             equity_sum = eq if equity_sum is None else equity_sum + eq
         return equity_sum, trades, exposure
 
@@ -720,6 +732,135 @@ def run_candidate(
     for t in tr:
         t["symbol"] = trade_symbols[int(t["symbol"])]
     return eq, tr, ex
+
+
+# --------------------------------------------------------------------------- walk-forward
+
+
+def _rank_value(r: dict[str, Any], key: str) -> float:
+    v = r.get(key)
+    reverse = key != "max_drawdown"
+    if v is None:
+        return -1e18 if reverse else 1e18
+    return float(v)
+
+
+def _slice_metrics(run: dict[str, Any], dates: list[date], a: int, b: int, cash0: float) -> dict[str, Any]:
+    """Metrics of a run over bars [a, b), rebased to cash0 at bar a."""
+    eq = run["_equity"][a:b]
+    if len(eq) < 2 or eq[0] <= 0:
+        return {}
+    rebased = eq / eq[0] * cash0
+    trades = [t for t in run["_trades"] if a <= t.get("exit", -1) < b]
+    exp = run["_exposure"][a:b] if isinstance(run.get("_exposure"), np.ndarray) else float(run.get("exposure", 0) or 0) / 100.0
+    return metrics(rebased, dates[a:b], trades, exp, cash0)
+
+
+def _fold_bounds(n: int, cfg: WalkForward) -> tuple[int, list[tuple[int, int]]]:
+    """Initial train length and [start, end) bar ranges of the test folds."""
+    train0 = int(round(n * cfg.train_pct / 100.0))
+    rest = n - train0
+    if rest < cfg.folds * 40 or train0 < 60:
+        raise HTTPException(
+            422,
+            f"Walk-forward needs at least 60 training bars and 40 bars per test fold; {n} bars with train {cfg.train_pct:g}% and {cfg.folds} folds is too short",
+        )
+    edges = [train0 + int(round(rest * k / cfg.folds)) for k in range(cfg.folds + 1)]
+    return train0, [(edges[k], edges[k + 1]) for k in range(cfg.folds)]
+
+
+def walk_forward(
+    runs: list[dict[str, Any]],
+    dates: list[date],
+    bench_eq: np.ndarray,
+    cash0: float,
+    key: str,
+    cfg: WalkForward,
+) -> dict[str, Any]:
+    """Re-select the best combination on each training slice and stitch the out-of-sample folds."""
+    n = len(dates)
+    train0, folds = _fold_bounds(n, cfg)
+    reverse = key != "max_drawdown"
+    oos = np.full(n, np.nan)
+    segments: list[dict[str, Any]] = []
+    level = cash0
+    chosen_ids: list[str] = []
+    is_cagrs: list[float] = []
+    for k, (t0, t1) in enumerate(folds):
+        a = 0 if cfg.mode == "anchored" else max(0, t0 - train0)
+        scored = []
+        for r in runs:
+            m = _slice_metrics(r, dates, a, t0, cash0)
+            if m:
+                scored.append((_rank_value(m, key), r, m))
+        if not scored:
+            continue
+        scored.sort(key=lambda x: x[0], reverse=reverse)
+        _, best, is_m = scored[0]
+        seg_eq = best["_equity"][t0:t1]
+        growth = seg_eq / seg_eq[0]
+        oos[t0:t1] = level * growth
+        level = float(oos[t1 - 1])
+        oos_m = _slice_metrics(best, dates, t0, t1, cash0)
+        b_seg = bench_eq[t0:t1]
+        bench_m = metrics(b_seg / b_seg[0] * cash0, dates[t0:t1], [], 1.0, cash0)
+        chosen_ids.append(best["id"])
+        if is_m.get("cagr") is not None:
+            is_cagrs.append(float(is_m["cagr"]))
+        segments.append(
+            {
+                "fold": k + 1,
+                "train_start": dates[a].isoformat(),
+                "train_end": dates[t0 - 1].isoformat(),
+                "test_start": dates[t0].isoformat(),
+                "test_end": dates[t1 - 1].isoformat(),
+                "train_bars": t0 - a,
+                "test_bars": t1 - t0,
+                "chosen_id": best["id"],
+                "chosen_label": best["label"],
+                "chosen_strategy_label": best["strategy_label"],
+                "chosen_full_rank": next((i + 1 for i, r in enumerate(runs) if r["id"] == best["id"]), None),
+                "is": {kk: is_m.get(kk) for kk in ("total_return", "cagr", "sharpe", "sortino", "max_drawdown", "trades")},
+                "oos": {kk: oos_m.get(kk) for kk in ("total_return", "cagr", "sharpe", "sortino", "max_drawdown", "trades", "exposure")},
+                "oos_benchmark": {kk: bench_m.get(kk) for kk in ("total_return", "cagr", "sharpe", "max_drawdown")},
+                "beat_benchmark": bool(
+                    oos_m.get("total_return") is not None
+                    and bench_m.get("total_return") is not None
+                    and oos_m["total_return"] > bench_m["total_return"]
+                ),
+            }
+        )
+    first = folds[0][0]
+    last = folds[-1][1]
+    oos_curve = oos[first:last]
+    oos_m = metrics(oos_curve, dates[first:last], [], sum(float(s["oos"].get("exposure") or 0) for s in segments) / max(1, len(segments)) / 100.0, cash0)
+    b_all = bench_eq[first:last]
+    bench_all = metrics(b_all / b_all[0] * cash0, dates[first:last], [], 1.0, cash0)
+    # the single best full-window combination measured on the same OOS span: the over-fit reference
+    top = runs[0] if runs else None
+    is_best = _slice_metrics(top, dates, first, last, cash0) if top else {}
+    avg_is = sum(is_cagrs) / len(is_cagrs) if is_cagrs else None
+    efficiency = None
+    if avg_is is not None and oos_m.get("cagr") is not None and avg_is > 0:
+        efficiency = round(float(oos_m["cagr"]) / avg_is, 2)
+    return {
+        "mode": cfg.mode,
+        "folds": cfg.folds,
+        "train_pct": cfg.train_pct,
+        "rank_by": key,
+        "train_bars": train0,
+        "oos_start": dates[first].isoformat(),
+        "oos_end": dates[last - 1].isoformat(),
+        "oos_equity": [None if not np.isfinite(v) else round(float(v), 2) for v in oos],
+        "oos": oos_m,
+        "oos_benchmark": bench_all,
+        "is_best_full": {"id": top["id"], "label": top["label"], "strategy_label": top["strategy_label"], **is_best} if top else None,
+        "segments": segments,
+        "folds_beating_benchmark": sum(1 for s in segments if s["beat_benchmark"]),
+        "distinct_selections": len(set(chosen_ids)),
+        "avg_is_cagr": round(avg_is, 2) if avg_is is not None else None,
+        "efficiency": efficiency,
+    }
 
 
 # --------------------------------------------------------------------------- routes
@@ -810,6 +951,7 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
                 **m,
                 "_equity": eq,
                 "_trades": trades,
+                "_exposure": exposure,
             }
         )
 
@@ -820,14 +962,8 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
 
     key = body.rank_by
     reverse = key != "max_drawdown"
-
-    def rank_val(r: dict[str, Any]) -> float:
-        v = r.get(key)
-        if v is None:
-            return -1e18 if reverse else 1e18
-        return float(v)
-
-    runs.sort(key=rank_val, reverse=reverse)
+    runs.sort(key=lambda r: _rank_value(r, key), reverse=reverse)
+    wf = walk_forward(runs, dates, bench_eq, cash0, key, body.walk_forward) if body.walk_forward else None
     for r in runs:
         r["excess_cagr"] = round(float(r.get("cagr", 0) or 0) - float(bench_m.get("cagr", 0) or 0), 2)
     out_runs: list[dict[str, Any]] = []
@@ -860,6 +996,15 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
         warnings.append("Rotation trade counts are full exits of a symbol at a rebalance; partial trims are not counted.")
     if any(v == "polygon" for v in sources.values()):
         warnings.append("Some history came from Polygon (Yahoo was rate limited); free plans return about two years, which shortens the window.")
+    if wf:
+        warnings[0] = (
+            "The ranking table is in-sample. Use the walk-forward block for the out-of-sample view: each fold's "
+            "parameters were chosen on data before it, so the stitched curve is the honest one."
+        )
+        if wf["oos"].get("cagr") is not None and wf["oos_benchmark"].get("cagr") is not None and wf["oos"]["cagr"] < wf["oos_benchmark"]["cagr"]:
+            warnings.append("Walk-forward: the re-selected strategy trailed buy & hold out of sample.")
+        if wf["efficiency"] is not None and wf["efficiency"] < 0.5:
+            warnings.append("Walk-forward efficiency is below 0.5: out-of-sample results kept less than half of the in-sample edge, a sign of over-fitting.")
 
     return {
         "engine": ENGINE,
@@ -881,6 +1026,7 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
         "best_id": best["id"] if best else None,
         "runs": out_runs,
         "benchmark": {"label": "Equal-weight buy & hold, no costs", "equity": [round(float(v), 2) for v in bench_eq], **bench_m},
+        "walk_forward": wf,
         "warnings": warnings,
         "assumptions": {
             "execution": "signal at previous close, fill at next close",
@@ -891,6 +1037,7 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
             "benchmark": "equal-weight buy & hold of the requested symbols from the start date, no costs",
             "trade_stats": "closed trades only; open positions marked to market",
             "returns": "252 trading days per year; Sharpe and Sortino assume a zero risk-free rate",
+            "walk_forward": "the first train_pct of the window trains only; the rest splits into equal test folds. Each fold's combination is the best on its training slice (anchored: everything before the fold; rolling: the same-length slice just before it). Test segments are cut from each combination's continuous equity path, so positions carry across a boundary and switching parameter sets at a boundary is assumed cost-free",
             "dividends": "Yahoo auto-adjusted closes (dividends and splits folded into price)",
         },
         "elapsed_ms": int((time.time() - t0) * 1000),

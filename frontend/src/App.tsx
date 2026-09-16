@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import Chart from "./Chart";
 import PortfolioPanel from "./PortfolioPanel";
 import MonteCarloPanel from "./MonteCarloPanel";
 import BacktestPanel from "./BacktestPanel";
+import { VIEW_PATHS, VIEW_TITLES, currentView, pushView, setViewTitle, type View } from "./routes";
 import DeepPanel from "./DeepPanel";
 import LlmAdvicePanel from "./LlmAdvicePanel";
 import FundamentalsPanel from "./FundamentalsPanel";
@@ -259,7 +260,23 @@ export default function App() {
   >([]);
   const [err, setErr] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<number | null>(null);
-  const [view, setView] = useState<"research" | "portfolios" | "montecarlo" | "backtest">("research");
+  const [view, setViewState] = useState<View>(() => currentView());
+  const setView = useCallback((v: View) => {
+    pushView(v);
+    setViewState(v);
+  }, []);
+
+  useEffect(() => {
+    pushView(view);
+    const onPop = () => {
+      const v = currentView();
+      setViewTitle(v);
+      setViewState(v);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [optMarket, setOptMarket] = useState<OptionsMarket | null>(null);
 
   useEffect(() => {
@@ -706,28 +723,23 @@ export default function App() {
           </a>
           <span>US equities · stock portfolio</span>
         </div>
-        <div className="view-tabs">
-          <button type="button" className={view === "research" ? "on" : ""} onClick={() => setView("research")}>
-            Research
-          </button>
-          <button
-            type="button"
-            className={view === "portfolios" ? "on" : ""}
-            onClick={() => setView("portfolios")}
-          >
-            Stock portfolio
-          </button>
-          <button
-            type="button"
-            className={view === "montecarlo" ? "on" : ""}
-            onClick={() => setView("montecarlo")}
-          >
-            Portfolio MC Simulation
-          </button>
-          <button type="button" className={view === "backtest" ? "on" : ""} onClick={() => setView("backtest")}>
-            Backtester
-          </button>
-        </div>
+        <nav className="view-tabs" aria-label="Sections">
+          {(Object.keys(VIEW_PATHS) as View[]).map((v) => (
+            <a
+              key={v}
+              href={VIEW_PATHS[v]}
+              className={view === v ? "on" : ""}
+              aria-current={view === v ? "page" : undefined}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+                e.preventDefault();
+                setView(v);
+              }}
+            >
+              {VIEW_TITLES[v]}
+            </a>
+          ))}
+        </nav>
         <div className="search">
           <svg className="search-icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden>
             <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
@@ -792,15 +804,15 @@ export default function App() {
         </div>
       </header>
       <SessionClock />
+
+      {view === "research" && (
+        <>
       <NewsFeed
         items={marketNews}
         empty="No market headlines"
         variant="tape"
         hint={`Yahoo · ${fmtRefreshSec(MARKET_NEWS_REFRESH_SEC)}`}
       />
-
-      {view === "research" && (
-        <>
       <nav className="strip">
         {indices.map((i) => (
           <button

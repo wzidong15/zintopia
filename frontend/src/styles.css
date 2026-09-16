@@ -70,7 +70,8 @@ button { cursor: pointer; }
   border: 1px solid var(--line);
   border-radius: 999px;
 }
-.view-tabs button {
+.view-tabs button,
+.view-tabs a {
   background: transparent;
   border: 0;
   color: var(--muted);
@@ -78,9 +79,13 @@ button { cursor: pointer; }
   border-radius: 999px;
   font-size: 13px;
   font-weight: 550;
+  text-decoration: none;
+  white-space: nowrap;
 }
-.view-tabs button:hover { color: var(--text); }
-.view-tabs button.on {
+.view-tabs button:hover,
+.view-tabs a:hover { color: var(--text); }
+.view-tabs button.on,
+.view-tabs a.on {
   color: var(--accent);
   background: var(--hover);
   box-shadow: inset 0 0 0 1px rgba(86, 211, 100, 0.25);
@@ -1920,3 +1925,13 @@ button { cursor: pointer; }
   cursor: pointer;
 }
 .bt-foot { padding: 0 16px 8px; font-size: 12px; line-height: 1.5; }
+
+.bt-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  font-size: 12px;
+}
+.bt-check-row input { width: auto !important; }
+.bt-sub { font-size: 11px; font-weight: 400; margin-left: 6px; }
