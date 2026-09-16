@@ -199,6 +199,7 @@ export const api = {
     fees_bps: number;
     slippage_bps: number;
     rank_by: string;
+    walk_forward?: { folds: number; train_pct: number; mode: "anchored" | "rolling" } | null;
   }) => sendJson<BtResult>("/api/backtest", "POST", body),
   runMonteCarlo: (body: object) => sendJson<McResult>("/api/monte-carlo", "POST", body),
 };

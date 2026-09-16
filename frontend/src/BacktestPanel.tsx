@@ -57,6 +57,10 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [logScale, setLogScale] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const [wfOn, setWfOn] = useState(true);
+  const [wfFolds, setWfFolds] = useState("4");
+  const [wfTrain, setWfTrain] = useState("50");
+  const [wfMode, setWfMode] = useState<"anchored" | "rolling">("anchored");
 
   useEffect(() => {
     let live = true;
@@ -164,6 +168,7 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
         fees_bps: Number(fees) || 0,
         slippage_bps: Number(slip) || 0,
         rank_by: rankBy,
+        walk_forward: wfOn ? { folds: Number(wfFolds) || 4, train_pct: Number(wfTrain) || 50, mode: wfMode } : null,
       });
       setResult(r);
       setSelectedId(r.best_id);
@@ -194,9 +199,19 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
     if (best && best.equity && selected && best.id !== selected.id) {
       out.push({ id: best.id, label: `#1 ${best.label}`, values: best.equity, color: COLORS[1], width: 1 });
     }
+    if (result.walk_forward) {
+      out.push({
+        id: "wf",
+        label: `Walk-forward OOS (${result.walk_forward.folds} folds)`,
+        values: result.walk_forward.oos_equity.map((v) => (v == null ? Number.NaN : v)),
+        color: COLORS[3],
+        width: 2,
+      });
+    }
     out.push({ id: "bench", label: "Buy & hold", values: result.benchmark.equity, color: "#8b949e", width: 1, dashed: true });
     return out;
   }, [result, selected, best]);
+  const wf = result?.walk_forward || null;
 
   return (
     <div className="mc-layout bt-layout">
@@ -275,6 +290,46 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
           <label className="pf-field">
             Slippage (bps)
             <input inputMode="decimal" value={slip} onChange={(e) => setSlip(e.target.value)} />
+          </label>
+        </div>
+        <div className="section-h">
+          Walk-forward validation
+          <span className="muted">re-select the best combination on each training slice, then run it forward</span>
+        </div>
+        <div className="mc-grid bt-grid">
+          <label className="pf-field bt-check">
+            Enabled
+            <span className="bt-check-row">
+              <input type="checkbox" checked={wfOn} onChange={(e) => setWfOn(e.target.checked)} />
+              <span className="muted">out-of-sample folds on top of the in-sample grid</span>
+            </span>
+          </label>
+          <label className="pf-field">
+            Test folds
+            <select value={wfFolds} onChange={(e) => setWfFolds(e.target.value)} disabled={!wfOn}>
+              {[2, 3, 4, 5, 6, 8].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pf-field">
+            Initial training %
+            <select value={wfTrain} onChange={(e) => setWfTrain(e.target.value)} disabled={!wfOn}>
+              {[30, 40, 50, 60, 70].map((n) => (
+                <option key={n} value={n}>
+                  {n}%
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="pf-field">
+            Training window
+            <select value={wfMode} onChange={(e) => setWfMode(e.target.value as "anchored" | "rolling")} disabled={!wfOn}>
+              <option value="anchored">Anchored (everything before the fold)</option>
+              <option value="rolling">Rolling (same-length slice before the fold)</option>
+            </select>
           </label>
         </div>
         {spec && (
@@ -430,10 +485,132 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
               </ul>
             )}
 
+            {wf && (
+              <>
+                <div className="section-h">
+                  Walk-forward · out of sample
+                  <span className="muted">
+                    {wf.mode} · {wf.folds} folds · train {wf.train_pct}% ({wf.train_bars} bars) · OOS {wf.oos_start} → {wf.oos_end} ·
+                    selected by {RANK_LABELS[wf.rank_by] || wf.rank_by}
+                  </span>
+                </div>
+                <div className="mc-stats bt-stats">
+                  <div>
+                    <div className="muted">OOS CAGR · buy &amp; hold</div>
+                    <div>
+                      <span className={tone(wf.oos.cagr)}>{pct(wf.oos.cagr)}</span> · {pct(wf.oos_benchmark.cagr)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">OOS Sharpe · buy &amp; hold</div>
+                    <div>
+                      {num(wf.oos.sharpe)} · {num(wf.oos_benchmark.sharpe)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">OOS max drawdown · buy &amp; hold</div>
+                    <div>
+                      <span className="down">{pct(wf.oos.max_drawdown)}</span> · {pct(wf.oos_benchmark.max_drawdown)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Walk-forward efficiency</div>
+                    <div className={wf.efficiency == null ? "" : wf.efficiency >= 0.5 ? "up" : "down"}>
+                      {wf.efficiency == null ? "—" : num(wf.efficiency)}
+                      <span className="muted bt-sub"> OOS CAGR ÷ avg in-sample CAGR {pct(wf.avg_is_cagr)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Folds beating buy &amp; hold</div>
+                    <div>
+                      {wf.folds_beating_benchmark} / {wf.segments.length}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Distinct selections</div>
+                    <div>
+                      {wf.distinct_selections} of {wf.segments.length} folds
+                    </div>
+                  </div>
+                  {wf.is_best_full && (
+                    <div>
+                      <div className="muted">In-sample #1 on the same OOS span</div>
+                      <div>
+                        <span className={tone(wf.is_best_full.cagr)}>{pct(wf.is_best_full.cagr)}</span> CAGR ·{" "}
+                        {num(wf.is_best_full.sharpe)} Sharpe
+                        <span className="muted bt-sub"> {wf.is_best_full.label}</span>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="muted">OOS total return · final</div>
+                    <div>
+                      <span className={tone(wf.oos.total_return)}>{pct(wf.oos.total_return)}</span> ·{" "}
+                      {money(wf.oos.final_value)}
+                    </div>
+                  </div>
+                </div>
+                <div className="bt-table-wrap">
+                  <table className="pf-table bt-table">
+                    <thead>
+                      <tr>
+                        <th>Fold</th>
+                        <th>Train</th>
+                        <th>Test</th>
+                        <th>Selected</th>
+                        <th>IS rank</th>
+                        <th>IS Sharpe</th>
+                        <th>OOS return</th>
+                        <th>OOS Sharpe</th>
+                        <th>OOS DD</th>
+                        <th>B&amp;H return</th>
+                        <th>Trades</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {wf.segments.map((sg) => (
+                        <tr
+                          key={sg.fold}
+                          className={`bt-row${result.runs.find((r) => r.id === sg.chosen_id)?.equity ? "" : " bt-row-noeq"}`}
+                          onClick={() => result.runs.find((r) => r.id === sg.chosen_id)?.equity && setSelectedId(sg.chosen_id)}
+                          title="Chart the selected combination's full in-sample path"
+                        >
+                          <td>{sg.fold}</td>
+                          <td>
+                            {sg.train_start} → {sg.train_end}
+                          </td>
+                          <td>
+                            {sg.test_start} → {sg.test_end}
+                          </td>
+                          <td className="bt-params-cell">
+                            {sg.chosen_strategy_label} · {sg.chosen_label}
+                          </td>
+                          <td>{sg.chosen_full_rank == null ? "—" : `#${sg.chosen_full_rank}`}</td>
+                          <td>{num(sg.is.sharpe)}</td>
+                          <td className={sg.beat_benchmark ? "up" : "down"}>{pct(sg.oos.total_return, 1)}</td>
+                          <td>{num(sg.oos.sharpe)}</td>
+                          <td className="down">{pct(sg.oos.max_drawdown, 1)}</td>
+                          <td className={tone(sg.oos_benchmark.total_return)}>{pct(sg.oos_benchmark.total_return, 1)}</td>
+                          <td>{sg.oos.trades ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="muted bt-foot">
+                  Each fold's combination is the best on data before it, so the orange curve never sees its own test
+                  period. Test segments come from each combination's continuous path: positions carry across a boundary
+                  and switching parameter sets at a boundary is assumed cost-free. Efficiency below 0.5 means most of
+                  the in-sample edge did not survive.
+                </p>
+              </>
+            )}
+
             <div className="section-h">
               Ranking
               <span className="muted">
-                {result.combination_count} runs · click a row to chart it (top {result.equity_runs} keep an equity curve)
+                {result.combination_count} runs · in-sample · click a row to chart it (top {result.equity_runs} keep an
+                equity curve)
               </span>
             </div>
             <div className="bt-table-wrap">

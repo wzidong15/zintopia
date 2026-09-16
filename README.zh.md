@@ -15,7 +15,7 @@
 
 本地美股研究终端：行情、K 线、涨跌榜、自选、市场新闻、股票组合模拟、蒙特卡洛路径，以及可选的 LLM / 启发式分析。
 
-启动后打开 [http://localhost:5173](http://localhost:5173)。点击代码（或搜索）即可加载报价与图表。**Market News** 在时段时钟下方，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。用 **Backtester** 在日线历史上用参数网格回放策略，或在同一组标的上比较所有策略。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
+启动后打开 [http://localhost:5173](http://localhost:5173)。每个标签有自己的 URL（`/`、`/portfolio`、`/monte-carlo`、`/backtest`），可以收藏或在新标签页打开，前进 / 后退也可用。点击代码（或搜索）即可加载报价与图表。**Market News** 只在 Research 标签的时段时钟下方显示，换股票时不会跟着变。用 **Stock portfolio** 创建模拟组合（名称 + 起始资金），模拟股票买卖，或挂上简单自动策略。不支持期权。用 **Portfolio MC Simulation** 按月度 ETF/个股历史跑假设路径（Lazy 组合、自由代码，或导入模拟基金）。用 **Backtester** 在日线历史上用参数网格回放策略，或在同一组标的上比较所有策略。选中一只股票后会加载深度分析。配置密钥后，LLM 研究对话会留在该股票页（快捷芯片 + 追问）。点击顶栏 logo 可刷新页面。
 
 这是研究界面，不是券商。**不构成投资建议。** 数据可能延迟、不完整或有误。
 
@@ -29,7 +29,7 @@
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
 - **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
-- **Backtester（策略回测）**：在最多十年的 Yahoo 日线收盘价上回放均线交叉、趋势过滤、RSI 均值回归、RSI + 趋势、动量轮动（双动量 / 行业轮动）或买入持有。参数网格（最多 300 组）、以 bps 计的佣金与滑点、按 Sharpe / CAGR / Calmar / Sortino / 回撤排名、与等权买入持有对比的权益曲线、预设、**Compare all strategies**，以及 **载入模拟基金的策略**。纯 numpy；仅为样本内研究。不构成投资建议。
+- **Backtester（策略回测）**：在最多十年的 Yahoo 日线收盘价上回放均线交叉、趋势过滤、RSI 均值回归、RSI + 趋势、动量轮动（双动量 / 行业轮动）或买入持有。参数网格（最多 300 组）、以 bps 计的佣金与滑点、按 Sharpe / CAGR / Calmar / Sortino / 回撤排名、与等权买入持有对比的权益曲线、预设、**Compare all strategies**，**载入模拟基金的策略**，以及 **walk-forward 验证**（按折 anchored / rolling 重新选参、拼接样本外曲线、walk-forward 效率）。纯 numpy。不构成投资建议。
 - **期权**（深度分析面板内）：平值隐含波动率、**IV rank**（由应用每日本地记录的样本计算，存于 `~/.zintopia/iv_history.json`；不足 20 天显示 `collecting`）、由平值跨式计算的 **预期波动**、**最大痛点**，以及最近月度到期的按行权价看跌/看涨未平仓量，外加异常成交量表。Yahoo 期权链，约延迟 15 分钟。没有期权流（flow）。
 - **期权条**（指数条下方）：VIX9D / VIX / VIX3M / VIX6M 期限结构（contango / flat / backwardation）、SKEW，以及 CBOE 每日 总 / 个股 / 指数 看跌看涨比（前一交易日；CBOE 收盘后发布）
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
@@ -109,6 +109,7 @@ docker compose up --build
 2. 设置标的（最多 12 个）、起止日期、初始资金、以 bps 计的佣金与滑点，以及排名指标。
 3. **Run grid** 对所选策略的每个组合排名。**Compare all strategies** 在同一组标的上按默认参数跑所有策略，先看哪类策略适合再调参。
 4. 点击排名中的一行即可与等权买入持有对比作图。前 12 名保留权益曲线和最近的已平仓交易。最近的运行会以标签形式留在结果上方，可来回切换。
+5. **Walk-forward 验证**（默认开启）：区间的前 *训练 %* 只用于训练，其余等分为若干测试折。每一折在其训练切片上选出最优组合（anchored：该折之前的全部数据；rolling：紧邻该折、长度相同的切片）并向前运行，再把各折拼成样本外曲线（图上橙色）。结果给出同一区间内样本外 CAGR / Sharpe / 回撤与买入持有的对比、**walk-forward 效率**（样本外 CAGR ÷ 所选组合的平均样本内 CAGR；低于 0.5 说明大部分优势没有保住）、跑赢买入持有的折数、选择变动次数，以及样本内第一名在同一区间的表现。测试段取自各组合的连续路径，持仓跨越边界，边界处切换参数视为无成本。
 
 | 策略 | 规则 |
 |---|---|
@@ -159,6 +160,10 @@ cp .env.example .env
 | `ZINTOPIA_DATA_DIR` | 模拟组合、自选与国会 PTR 缓存的本地 JSON 目录（默认 `~/.zintopia`）。Docker 内为 `/data`。 |
 | `ZINTOPIA_HOST_DATA_DIR` | Compose 挂到 `/data` 的主机路径（默认 `~/.zintopia`）。 |
 | `ZINTOPIA_HTTP_POOL_SIZE` | 出站行情 HTTP 的 keep-alive 连接池（默认 `20`，限制 2–128）。 |
+| `ZINTOPIA_QUOTE_HTTP_TIMEOUT` | 行情源单次请求超时秒数（默认 `6`）。 |
+| `ZINTOPIA_CONGRESS_TTL_SEC` | 参众两院 PTR 缓存复用时长，超过后刷新（默认 `43200` = 12 小时）。 |
+| `ZINTOPIA_CONGRESS_LOOKBACK_DAYS` | PTR 申报回溯天数（默认 `120`，最少 30）。 |
+| `ZINTOPIA_STATIC_DIR` | 仅 Docker：FastAPI 托管的前端构建目录（镜像中为 `/app/ui`；`./start.sh` 不要设置）。 |
 | `POLYGON_API_KEY` 或 `MASSIVE_API_KEY` | 最新成交快照（套餐允许时为实时） |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM 研究与 Vibe 对话（默认模型 `gpt-4.1`） |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | LLM 研究与 Vibe 对话（默认 `claude-opus-4-20250514`） |
@@ -194,6 +199,7 @@ cp .env.example .env
 
 | 路由 | 作用 |
 |---|---|
+| `GET /`、`/portfolio`、`/monte-carlo`、`/backtest` | 界面标签（Docker 对这些路径返回 `index.html`；Vite 开发服务器同样如此） |
 | `GET /api/health` | 存活检查、Polygon 标志、LLM 提供方标志、纽交所时段（`market`） |
 | `GET /api/network-test` | 出站 HTTPS 诊断 |
 | `GET /api/indices` | SPY、QQQ、DIA、IWM、VIX |
@@ -228,7 +234,7 @@ cp .env.example .env
 | `POST /api/portfolios/{id}/vibe` | 开始 Vibe 模拟组合对话（Yahoo + 日线技术分析，再 LLM） |
 | `POST /api/portfolios/{id}/vibe/chat` | 同一 `conversation_id` 追问 |
 | `GET /api/backtest/meta` | 策略定义（参数网格）、预设、模拟基金映射、上限 |
-| `POST /api/backtest` | 跑网格：`{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by}` → 排名、权益曲线、基准 |
+| `POST /api/backtest` | 跑网格：`{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by, walk_forward?:{folds, train_pct, mode}}` → 排名、权益曲线、基准，以及 `walk_forward` 块（各折选择、拼接的样本外曲线、效率） |
 | `GET /api/monte-carlo/meta` | 资产类别 ETF 映射 + Lazy 组合 |
 | `POST /api/monte-carlo` | 跑蒙特卡洛（Yahoo 月线；可导入模拟基金或资产类别权重） |
 
@@ -239,6 +245,8 @@ backend/app.py           FastAPI 应用
 backend/newsfeed.py      Yahoo 个股新闻 + 市场 RSS 头条
 backend/ownership.py     持有人、空头、SEC 申报
 backend/congress_ptr.py  众议院书记官 + 参议院 eFD PTR 缓存
+backend/fundamentals.py  利润表、现金流、资产负债表、EPS 与预期（Yahoo）
+backend/vibe_portfolio.py Vibe 模拟基金研究包 + 启发式点评
 backend/portfolios.py    股票组合模拟（仅正股，无期权）
 backend/monte_carlo.py   组合蒙特卡洛（月度历史）
 backend/backtest.py      策略回测（numpy；网格、轮动、子账户）
@@ -254,6 +262,9 @@ Dockerfile               多阶段镜像（Vite 构建 + FastAPI）
 docker-compose.yml       界面与 API 在 8000 端口；把 ~/.zintopia 挂到 /data
 .env.example             密钥占位 — 本地复制为 .env
 docs/DATA_SOURCES.md     各厂商 URL、环境变量与付费档（中文见 DATA_SOURCES.zh.md）
+README.md                本文件的英文版
+check-api.sh             对运行中的 API 做 curl 冒烟检查
+.cursor/skills/          编辑器技能文件，记录 API 与界面约定
 ~/.zintopia/             本地模拟组合、自选、PTR 缓存、IV 历史（不进 git）
 ```
 

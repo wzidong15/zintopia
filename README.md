@@ -15,7 +15,7 @@
 
 Local US-stock research terminal: quotes, charts, movers, watchlist, market-wide news, a stock portfolio simulator, Monte Carlo paths, a strategy backtester, and optional LLM / heuristic analysis.
 
-Open [http://localhost:5173](http://localhost:5173) after starting the app. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Use **Backtester** to replay a strategy over daily history with a parameter grid, or compare every strategy on the same symbols. Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
+Open [http://localhost:5173](http://localhost:5173) after starting the app. Each tab has its own URL (`/`, `/portfolio`, `/monte-carlo`, `/backtest`), so you can bookmark one or open it in a new tab; back and forward work. Click a ticker (or search) to load its quote and chart. **Market News** sits under the session clock on the Research tab only and does not change when you switch names. Use **Stock portfolio** to create a paper fund (name + starting dollars), simulate share trades, or attach a simple automatic strategy. Options are not supported. Use **Portfolio MC Simulation** to run hypothetical paths from monthly ETF/ticker history (lazy portfolios, free tickers, or import a paper fund). Use **Backtester** to replay a strategy over daily history with a parameter grid, or compare every strategy on the same symbols. Deep analysis loads when you select a stock. The LLM research dialog stays on the ticker page (starter chips plus follow-ups) when a key is set. Click the header logo to reload.
 
 This is a research UI, not a broker. **Not financial advice.** Data can be delayed, incomplete, or wrong.
 
@@ -29,7 +29,7 @@ This is a research UI, not a broker. **Not financial advice.** Data can be delay
 - Daily TradingView technical rating, Yahoo **ticker** news (same 60s poll, or `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`), company profile, financials, and ownership / SEC filings (10-K / 10-Q / 8-K, holders, short interest)
 - **Stock portfolio simulation**: virtual funds that buy and sell **shares** of US stocks and ETFs, with optional auto strategies, live NAV / P/L, and a **Vibe dialog** (Yahoo last/news + TradingView daily TA, then an LLM review you can follow up in the same conversation). Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. No options. Not a broker.
 - **Portfolio MC Simulation**: Monte Carlo paths from monthly ETF/ticker history (cashflows, tax haircut, historical bootstrap or statistical/GARCH draws, inflation, rebalancing). Allocate from asset-class dropdowns / lazy portfolios, or import a paper fund. Hypothetical. Not a forecast.
-- **Backtester**: replay SMA crossover, trend filter, RSI mean reversion, RSI + trend, momentum rotation (dual momentum / sector rotation), or buy & hold over up to ten years of Yahoo daily closes. Parameter grids (up to 300 combinations), commission and slippage in bps, ranking by Sharpe / CAGR / Calmar / Sortino / drawdown, equity curves against equal-weight buy & hold, presets, **Compare all strategies**, and **load a paper fund's strategy**. Pure numpy; in-sample research only. Not financial advice.
+- **Backtester**: replay SMA crossover, trend filter, RSI mean reversion, RSI + trend, momentum rotation (dual momentum / sector rotation), or buy & hold over up to ten years of Yahoo daily closes. Parameter grids (up to 300 combinations), commission and slippage in bps, ranking by Sharpe / CAGR / Calmar / Sortino / drawdown, equity curves against equal-weight buy & hold, presets, **Compare all strategies**, **load a paper fund's strategy**, and **walk-forward validation** (anchored or rolling re-selection per fold, stitched out-of-sample curve, walk-forward efficiency). Pure numpy. Not financial advice.
 - **Options** (in the deep panel): ATM implied volatility, **IV rank** (from daily samples the app records locally in `~/.zintopia/iv_history.json`; shows `collecting` until 20 days exist), **expected move** from the ATM straddle, **max pain**, and put/call open interest by strike for the nearest monthly expiry, plus the unusual-volume table. Yahoo chain, ~15 minutes delayed. No options flow.
 - **Options strip** under the index strip: VIX9D / VIX / VIX3M / VIX6M term structure (contango / flat / backwardation), SKEW, and the CBOE daily total / equity / index put/call ratios (previous session; CBOE publishes the file after the close)
 - **Deep analysis**: insider Form 4 flow, option volume / put-call, official Senate and House **periodic transaction reports** (not live holdings), analyst targets, headlines, and a heuristic stance (`ACCUMULATE` … `AVOID`)
@@ -109,6 +109,7 @@ The **Backtester** tab replays a rule over Yahoo daily closes. It is in-sample r
 2. Set symbols (max 12), start / end, initial cash, commission and slippage in basis points, and the ranking key.
 3. **Run grid** ranks every combination of the chosen strategy. **Compare all strategies** runs each strategy at its defaults on the same symbols so you can see which family suits them before tuning.
 4. Click a row in the ranking to chart it against equal-weight buy & hold. The top 12 runs keep an equity curve and their last closed trades. Recent runs stay as chips above the results so you can flip between them.
+5. **Walk-forward validation** (on by default): the first *training %* of the window trains only; the rest splits into equal test folds. For each fold the best combination on its training slice (anchored: everything before the fold; rolling: a same-length slice just before it) is run forward, and the folds are stitched into an out-of-sample curve (orange on the chart). The block reports OOS CAGR / Sharpe / drawdown against buy & hold on the same span, **walk-forward efficiency** (OOS CAGR ÷ average in-sample CAGR of the selected cells; below 0.5 means most of the edge did not survive), folds beating buy & hold, how often the selection changed, and what the in-sample #1 would have done on the same span. Test segments are cut from each combination's continuous path, so positions carry across a boundary and switching parameter sets at a boundary is assumed cost-free.
 
 | Strategy | Rule |
 |---|---|
@@ -159,6 +160,10 @@ cp .env.example .env
 | `ZINTOPIA_DATA_DIR` | Local JSON dir for paper funds, watchlist, and the Congress PTR cache (default `~/.zintopia`). Inside Docker this is `/data`. |
 | `ZINTOPIA_HOST_DATA_DIR` | Host path Compose bind-mounts at `/data` (default `~/.zintopia`). |
 | `ZINTOPIA_HTTP_POOL_SIZE` | Keep-alive connection pool for outbound quote HTTP (default `20`, clamp 2–128). |
+| `ZINTOPIA_QUOTE_HTTP_TIMEOUT` | Per-request timeout in seconds for quote sources (default `6`). |
+| `ZINTOPIA_CONGRESS_TTL_SEC` | How long the House / Senate PTR cache is reused before a refresh (default `43200` = 12 hours). |
+| `ZINTOPIA_CONGRESS_LOOKBACK_DAYS` | How far back PTR filings are fetched (default `120`, minimum 30). |
+| `ZINTOPIA_STATIC_DIR` | Docker only: folder of the built UI that FastAPI serves (set to `/app/ui` in the image; leave unset with `./start.sh`). |
 | `POLYGON_API_KEY` or `MASSIVE_API_KEY` | Last-trade snapshots (realtime when the plan allows) |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | LLM research and Vibe dialogs (default model `gpt-4.1`) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | LLM research and Vibe dialogs (default `claude-opus-4-20250514`) |
@@ -194,6 +199,7 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 
 | Route | Role |
 |---|---|
+| `GET /`, `/portfolio`, `/monte-carlo`, `/backtest` | UI tabs (Docker serves `index.html` for these paths; Vite does the same in dev) |
 | `GET /api/health` | Liveness, Polygon flag, LLM provider flags, NYSE session (`market`) |
 | `GET /api/network-test` | Outbound HTTPS diagnostic |
 | `GET /api/indices` | SPY, QQQ, DIA, IWM, VIX |
@@ -228,7 +234,7 @@ Do not treat unsigned TradingView or Yahoo prints as exchange-realtime. A Polygo
 | `POST /api/portfolios/{id}/vibe` | Start Vibe paper-fund conversation (Yahoo + daily TA, then LLM) |
 | `POST /api/portfolios/{id}/vibe/chat` | Follow-up on the same `conversation_id` |
 | `GET /api/backtest/meta` | Strategy specs (parameter grids), presets, paper-fund mapping, limits |
-| `POST /api/backtest` | Run a grid: `{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by}` → ranked runs, equity curves, benchmark |
+| `POST /api/backtest` | Run a grid: `{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by, walk_forward?:{folds, train_pct, mode}}` → ranked runs, equity curves, benchmark, and a `walk_forward` block (per-fold selections, stitched OOS curve, efficiency) |
 | `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios |
 | `POST /api/monte-carlo` | Run Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |
 
@@ -239,6 +245,8 @@ backend/app.py           FastAPI app
 backend/newsfeed.py      Yahoo ticker news + market RSS tape
 backend/ownership.py     Holders, short interest, SEC filings
 backend/congress_ptr.py  House Clerk + Senate eFD PTR cache
+backend/fundamentals.py  Income, cash flow, balance sheet, EPS vs estimate (Yahoo)
+backend/vibe_portfolio.py Vibe paper-fund research pack + heuristic review
 backend/portfolios.py    Stock portfolio simulation (shares only, no options)
 backend/monte_carlo.py   Portfolio Monte Carlo (monthly history)
 backend/backtest.py      Strategy backtester (numpy; grids, rotation, sleeves)
@@ -253,7 +261,10 @@ start.sh                 Dev launcher (loads .env if present)
 Dockerfile               Multi-stage image (Vite build + FastAPI)
 docker-compose.yml       UI + API on port 8000; bind-mounts ~/.zintopia at /data
 .env.example             Key placeholders — copy to .env locally
-docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier
+docs/DATA_SOURCES.md     Every vendor URL, env key, and paid tier (中文: DATA_SOURCES.zh.md)
+README.zh.md             This file in Chinese
+check-api.sh             Curl smoke check for a running API
+.cursor/skills/          Editor skill with API and UI conventions
 ~/.zintopia/             Local paper funds, watchlist, PTR cache, IV history (not in git)
 ```
 

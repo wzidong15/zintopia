@@ -94,6 +94,53 @@ export type BtBenchmark = {
   calmar: number | null;
 };
 
+export type BtFoldStats = {
+  total_return?: number | null;
+  cagr?: number | null;
+  sharpe?: number | null;
+  sortino?: number | null;
+  max_drawdown?: number | null;
+  trades?: number | null;
+  exposure?: number | null;
+};
+
+export type BtSegment = {
+  fold: number;
+  train_start: string;
+  train_end: string;
+  test_start: string;
+  test_end: string;
+  train_bars: number;
+  test_bars: number;
+  chosen_id: string;
+  chosen_label: string;
+  chosen_strategy_label: string;
+  chosen_full_rank: number | null;
+  is: BtFoldStats;
+  oos: BtFoldStats;
+  oos_benchmark: BtFoldStats;
+  beat_benchmark: boolean;
+};
+
+export type BtWalkForward = {
+  mode: "anchored" | "rolling";
+  folds: number;
+  train_pct: number;
+  rank_by: string;
+  train_bars: number;
+  oos_start: string;
+  oos_end: string;
+  oos_equity: (number | null)[];
+  oos: BtFoldStats & { volatility?: number; calmar?: number | null; final_value?: number };
+  oos_benchmark: BtFoldStats & { volatility?: number; calmar?: number | null };
+  is_best_full: ({ id: string; label: string; strategy_label: string } & BtFoldStats) | null;
+  segments: BtSegment[];
+  folds_beating_benchmark: number;
+  distinct_selections: number;
+  avg_is_cagr: number | null;
+  efficiency: number | null;
+};
+
 export type BtResult = {
   engine: string;
   symbols: string[];
@@ -114,6 +161,7 @@ export type BtResult = {
   best_id: string | null;
   runs: BtRun[];
   benchmark: BtBenchmark;
+  walk_forward?: BtWalkForward | null;
   warnings: string[];
   assumptions: Record<string, string>;
   elapsed_ms: number;
