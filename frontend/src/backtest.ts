@@ -4,6 +4,52 @@ export type BtParamSpec = {
   type: "int_list" | "float_list" | "symbol";
   default: number[] | string;
   help?: string;
+  range?: [number, number, number];
+};
+
+export type BtSearchTop = {
+  id: string;
+  label: string;
+  params: Record<string, unknown>;
+  objective: number;
+  neighbours: number;
+  neighbours_mean: number | null;
+  neighbours_min: number | null;
+  stable: boolean;
+  phase?: string | null;
+  cagr?: number | null;
+  sharpe?: number | null;
+  sortino?: number | null;
+  max_drawdown?: number | null;
+  calmar?: number | null;
+  trades?: number | null;
+  win_rate?: number | null;
+  profit_factor?: number | null;
+  exposure?: number | null;
+};
+
+export type BtSensitivityAxis = {
+  key: string;
+  label: string;
+  best: number;
+  points: { value: number; objective: number | null; cagr?: number | null; max_drawdown?: number | null; id?: string | null }[];
+};
+
+export type BtSearch = {
+  method: string;
+  objective: string;
+  budget: number;
+  grid_size: number;
+  exhaustive: boolean;
+  evaluations: number;
+  invalid_skipped: number;
+  phases: { phase: string; evaluated: number }[];
+  space: Record<string, unknown[]>;
+  fixed: Record<string, unknown>;
+  seed: number;
+  top: BtSearchTop[];
+  sensitivity: BtSensitivityAxis[];
+  best_id: string;
 };
 
 export type BtStrategySpec = {
@@ -162,6 +208,7 @@ export type BtResult = {
   runs: BtRun[];
   benchmark: BtBenchmark;
   walk_forward?: BtWalkForward | null;
+  search?: BtSearch | null;
   warnings: string[];
   assumptions: Record<string, string>;
   elapsed_ms: number;
@@ -247,4 +294,33 @@ export function gridSize(spec: BtStrategySpec, params: Record<string, unknown>):
     n *= Math.max(1, pairs);
   }
   return n;
+}
+
+/** Split the parameter boxes into the optimizer's fixed values (one entry) and axes (several). */
+export function searchSpaceFromText(
+  spec: BtStrategySpec,
+  text: Record<string, string>,
+): { space: Record<string, number[]>; fixed: Record<string, unknown> } {
+  const parsed = paramsFromText(spec, text);
+  const space: Record<string, number[]> = {};
+  const fixed: Record<string, unknown> = {};
+  for (const p of spec.params) {
+    const v = parsed[p.key];
+    if (p.type === "symbol") {
+      fixed[p.key] = v;
+      continue;
+    }
+    const raw = (text[p.key] ?? "").trim();
+    const arr = Array.isArray(v) ? (v as number[]) : [];
+    if (!raw) continue; // blank box = use the strategy's default range
+    if (arr.length === 1) fixed[p.key] = arr[0];
+    else if (arr.length > 1) space[p.key] = arr;
+  }
+  return { space, fixed };
+}
+
+export function rangeLabel(p: BtParamSpec): string {
+  if (!p.range) return "";
+  const [lo, hi, step] = p.range;
+  return `${lo}–${hi} step ${step}`;
 }

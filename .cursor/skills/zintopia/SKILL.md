@@ -49,6 +49,7 @@ Do not claim unsigned TV/Yahoo quotes are exchange-realtime. UI footer must stay
 | `GET /api/options-market` | VIX9D / VIX / VIX3M / VIX6M term structure + SKEW (Yahoo, CBOE delayed fallback) and CBOE daily put/call ratios; rendered as a strip under the index strip |
 | `GET/PUT /api/watchlist` | Watchlist symbols + sort (`~/.zintopia/watchlist.json`) |
 | `GET /api/backtest/meta` | Backtester strategy specs, presets, paper-fund mapping (`backend/backtest.py`) |
+| `POST /api/backtest/optimize` | Parameter search (random + coordinate hill-climb, neighbourhood stability, sensitivity slices) over a strategy's `range` specs; same response shape plus `search` |
 | `POST /api/backtest` | Grid backtest on Yahoo `10y` daily closes with optional `walk_forward` (anchored/rolling re-selection per fold, stitched OOS curve); numpy engine, no vectorbt. Tests: `backend/tests` |
 | `GET /api/monte-carlo/meta` | Asset-class ETF map + lazy portfolios for MC |
 | `POST /api/monte-carlo` | Monte Carlo (monthly Yahoo history; import paper fund or asset-class weights) |

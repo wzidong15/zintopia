@@ -201,5 +201,20 @@ export const api = {
     rank_by: string;
     walk_forward?: { folds: number; train_pct: number; mode: "anchored" | "rolling" } | null;
   }) => sendJson<BtResult>("/api/backtest", "POST", body),
+  optimizeBacktest: (body: {
+    symbols: string[];
+    start: string;
+    end: string | null;
+    strategy: string;
+    space: Record<string, number[]>;
+    fixed: Record<string, unknown>;
+    objective: string;
+    budget: number;
+    seed?: number;
+    initial_cash: number;
+    fees_bps: number;
+    slippage_bps: number;
+    walk_forward?: { folds: number; train_pct: number; mode: "anchored" | "rolling" } | null;
+  }) => sendJson<BtResult>("/api/backtest/optimize", "POST", body),
   runMonteCarlo: (body: object) => sendJson<McResult>("/api/monte-carlo", "POST", body),
 };

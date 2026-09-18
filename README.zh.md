@@ -29,7 +29,7 @@
 - 日线 TradingView 技术评级、Yahoo **个股**新闻（同样默认 60 秒，或 `ZINTOPIA_TICKER_NEWS_REFRESH_SEC`）、公司资料、财务报表、股权 / SEC 申报（10-K / 10-Q / 8-K、持有人、空头）
 - **股票组合模拟**：虚拟资金买卖美股与 ETF **正股**，可选自动策略、实时净值 / 盈亏，以及 **Vibe 对话**（Yahoo 最新价/新闻 + TradingView 日线技术分析，再由 LLM 点评，可在同一会话追问）。需要 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY`。不支持期权。不是券商。
 - **Portfolio MC Simulation**：用月度 ETF/个股历史做蒙特卡洛。资产配置可从资产类别下拉 / Lazy 组合选择，或直接导入模拟基金。假设路径，不是预测。
-- **Backtester（策略回测）**：在最多十年的 Yahoo 日线收盘价上回放均线交叉、趋势过滤、RSI 均值回归、RSI + 趋势、动量轮动（双动量 / 行业轮动）或买入持有。参数网格（最多 300 组）、以 bps 计的佣金与滑点、按 Sharpe / CAGR / Calmar / Sortino / 回撤排名、与等权买入持有对比的权益曲线、预设、**Compare all strategies**，**载入模拟基金的策略**，以及 **walk-forward 验证**（按折 anchored / rolling 重新选参、拼接样本外曲线、walk-forward 效率）。纯 numpy。不构成投资建议。
+- **Backtester（策略回测）**：在最多十年的 Yahoo 日线收盘价上回放均线交叉、趋势过滤、RSI 均值回归、RSI + 趋势、Connors Double 7s、布林带均值回归、Donchian / 海龟突破、动量轮动（双动量 / 行业轮动）或买入持有。**Optimize parameters** 在策略的参数范围内自动搜索，并给出平台 / 尖峰判定与敏感度切片。参数网格（最多 300 组）、以 bps 计的佣金与滑点、按 Sharpe / CAGR / Calmar / Sortino / 回撤排名、与等权买入持有对比的权益曲线、预设、**Compare all rules**，**载入模拟基金的策略**，以及 **walk-forward 验证**（按折 anchored / rolling 重新选参、拼接样本外曲线、walk-forward 效率）。纯 numpy。不构成投资建议。
 - **期权**（深度分析面板内）：平值隐含波动率、**IV rank**（由应用每日本地记录的样本计算，存于 `~/.zintopia/iv_history.json`；不足 20 天显示 `collecting`）、由平值跨式计算的 **预期波动**、**最大痛点**，以及最近月度到期的按行权价看跌/看涨未平仓量，外加异常成交量表。Yahoo 期权链，约延迟 15 分钟。没有期权流（flow）。
 - **期权条**（指数条下方）：VIX9D / VIX / VIX3M / VIX6M 期限结构（contango / flat / backwardation）、SKEW，以及 CBOE 每日 总 / 个股 / 指数 看跌看涨比（前一交易日；CBOE 收盘后发布）
 - **深度分析**：内部人 Form 4 流向、期权成交量 / 看跌看涨比、参众两院官方 **定期交易报告**（不是实时持仓）、分析师目标价、头条，以及启发式立场（`ACCUMULATE` … `AVOID`）
@@ -105,11 +105,12 @@ docker compose up --build
 
 **Backtester** 标签在 Yahoo 日线收盘价上回放规则。这是单一价格路径上的样本内研究，不是预测。
 
-1. 选一个 **预设**（SPY 的 Faber 趋势、SPY / EFA 双动量并回退 SHY、11 只行业 ETF 轮动、RSI(2) 回调、均线网格），**载入模拟基金的策略**，或选择策略后自行输入参数列表（`10, 20, 50`）。每个列表参数都会展开成网格。
+1. 选一个 **预设**：四个 ★ 条目是在 2017–2026 美股 ETF 数据上验证过的最优组合（SPY 高于 SMA 150；SPY / EFA 加速双动量并回退 SHY；12 个月行业轮动前 2 名；RSI(2) < 15 叠加），另有 Double 7s、布林带、海龟突破、Faber 与双动量网格、行业轮动和均线网格。或者**载入模拟基金的策略**，或选择策略后自行输入参数列表（`10, 20, 50`）。每个列表参数都会展开成网格。
 2. 设置标的（最多 12 个）、起止日期、初始资金、以 bps 计的佣金与滑点，以及排名指标。
-3. **Run grid** 对所选策略的每个组合排名。**Compare all strategies** 在同一组标的上按默认参数跑所有策略，先看哪类策略适合再调参。
-4. 点击排名中的一行即可与等权买入持有对比作图。前 12 名保留权益曲线和最近的已平仓交易。最近的运行会以标签形式留在结果上方，可来回切换。
-5. **Walk-forward 验证**（默认开启）：区间的前 *训练 %* 只用于训练，其余等分为若干测试折。每一折在其训练切片上选出最优组合（anchored：该折之前的全部数据；rolling：紧邻该折、长度相同的切片）并向前运行，再把各折拼成样本外曲线（图上橙色）。结果给出同一区间内样本外 CAGR / Sharpe / 回撤与买入持有的对比、**walk-forward 效率**（样本外 CAGR ÷ 所选组合的平均样本内 CAGR；低于 0.5 说明大部分优势没有保住）、跑赢买入持有的折数、选择变动次数，以及样本内第一名在同一区间的表现。测试段取自各组合的连续路径，持仓跨越边界，边界处切换参数视为无成本。
+3. **Run grid** 对所选策略的每个组合排名。**Compare all rules** 在同一组标的上按默认参数跑所有策略，先看哪类策略适合再调参。
+4. 结果顶部是 **结论卡**：样本内 / 样本外 CAGR 与买入持有的对比、最大回撤、Sharpe、交易数与胜率、walk-forward 效率，以及两句用白话说明数字含义的判断。图表下方用标签页放排名、walk-forward 各折、参数搜索、最近交易和说明。点击排名中的一行即可作图；前 12 名保留权益曲线。最近的运行以标签形式保留，可来回切换。成本、排名指标、walk-forward 设置和搜索预算收在 **Costs & validation** 下。
+5. **Optimize parameters（参数自动搜索）**：在策略的搜索范围内（每个输入框下方标注）随机采样，再从领先者出发做坐标爬山，直到预算用完（100–800 次评估；网格小于预算时穷举）。输入框里只有一个值即固定该参数，多个值即作为搜索轴，留空则用默认范围。搜索表列出前 10 名及其 ±1 步邻居的目标均值，并给出 **plateau / spike（平台 / 尖峰）** 判定；敏感度柱状图展示其他参数固定在最优值时，单个参数变动对目标的影响。所有采样点都会进入排名并参与 walk-forward，因此样本外块才是对搜索结果的可信读数。
+6. **Walk-forward 验证**（默认开启）：区间的前 *训练 %* 只用于训练，其余等分为若干测试折。每一折在其训练切片上选出最优组合（anchored：该折之前的全部数据；rolling：紧邻该折、长度相同的切片）并向前运行，再把各折拼成样本外曲线（图上橙色）。结果给出同一区间内样本外 CAGR / Sharpe / 回撤与买入持有的对比、**walk-forward 效率**（样本外 CAGR ÷ 所选组合的平均样本内 CAGR；低于 0.5 说明大部分优势没有保住）、跑赢买入持有的折数、选择变动次数，以及样本内第一名在同一区间的表现。测试段取自各组合的连续路径，持仓跨越边界，边界处切换参数视为无成本。
 
 | 策略 | 规则 |
 |---|---|
@@ -118,6 +119,9 @@ docker compose up --build
 | Trend filter | 收盘价高于均线时持有，否则持现金（Faber）。 |
 | RSI mean reversion | Wilder RSI 低于入场阈值买入；高于退出阈值、触发止损或达到最长持有天数卖出。 |
 | RSI + trend filter | 同上，但只在趋势均线之上买入，收盘跌破均线即卖出。 |
+| Double 7s | Connors 的 ETF 规则：收盘为最近 N 日最低（书中 N = 7）且在趋势均线之上时买入；收盘为最近 N 日最高时卖出。 |
+| Bollinger mean reversion | 收盘跌破 SMA − k·σ 买入；回到中轨（退出 k = 0）或上轨卖出。可选趋势均线。 |
+| Donchian breakout | 海龟：收盘突破前 N 日最高收盘买入；跌破前 M 日最低收盘卖出。原系统为 20/10 与 55/20。 |
 | Momentum rotation | 每月按上一收盘的历史涨幅排名，持有动量为正的前 N 名各 1/N；空缺份额给防御标的或现金。回看 0 = 1 / 3 / 6 个月收益平均。 |
 
 约定：前一收盘产生信号，下一收盘成交。止损按收盘价判断、再下一收盘成交，实际亏损可能超过阈值。按标的的策略把资金分成独立子账户，入场时全仓。轮动先卖后买，买入按扣除成本后的剩余现金定量。指标用起始日之前的历史预热（Yahoo 约返回十年，默认起始为 2017）。收盘价为 Yahoo 复权价。交易统计只计已平仓交易。Sharpe 与 Sortino 假设无风险利率为零、每年 252 个交易日。模拟基金的"日涨幅榜"策略依赖实时榜单，无法回放。
@@ -234,6 +238,7 @@ cp .env.example .env
 | `POST /api/portfolios/{id}/vibe` | 开始 Vibe 模拟组合对话（Yahoo + 日线技术分析，再 LLM） |
 | `POST /api/portfolios/{id}/vibe/chat` | 同一 `conversation_id` 追问 |
 | `GET /api/backtest/meta` | 策略定义（参数网格）、预设、模拟基金映射、上限 |
+| `POST /api/backtest/optimize` | 参数搜索：`{symbols, start, end, strategy, space?:{key:[值] 或 {min,max,step}}, fixed?:{key:值}, objective, budget, seed?, walk_forward?}` → 与 `POST /api/backtest` 同样的结构，外加 `search` 块（前 10 名及邻域稳定性、敏感度切片、阶段） |
 | `POST /api/backtest` | 跑网格：`{symbols, start, end, strategies:[{kind, params}], initial_cash, fees_bps, slippage_bps, rank_by, walk_forward?:{folds, train_pct, mode}}` → 排名、权益曲线、基准，以及 `walk_forward` 块（各折选择、拼接的样本外曲线、效率） |
 | `GET /api/monte-carlo/meta` | 资产类别 ETF 映射 + Lazy 组合 |
 | `POST /api/monte-carlo` | 跑蒙特卡洛（Yahoo 月线；可导入模拟基金或资产类别权重） |

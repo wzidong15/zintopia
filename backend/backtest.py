@@ -43,6 +43,7 @@ MAX_SYMBOLS = 12
 MAX_RUNS = 300
 MAX_STRATEGIES = 8
 EQUITY_RUNS = 12
+MAX_OPT_EVALS = 1000
 MIN_BARS = 60
 HISTORY_RANGE = "10y"
 ENGINE = "zintopia-numpy"
@@ -62,6 +63,8 @@ def configure(*, history: Callable[[str, str], dict[str, Any]]) -> None:
 
 # --------------------------------------------------------------------------- strategy specs
 
+INT_KEYS = frozenset({"fast", "slow", "window", "rsi_window", "trend_window", "max_hold", "lookback", "top_n", "entry_days", "exit_days"})
+
 RankKey = Literal["sharpe", "cagr", "total_return", "calmar", "sortino", "max_drawdown"]
 
 STRATEGIES: list[dict[str, Any]] = [
@@ -78,9 +81,9 @@ STRATEGIES: list[dict[str, Any]] = [
         "group": "per_symbol",
         "description": "Long while the fast SMA is above the slow SMA; exit on the cross down or a close-observed stop. After a stop, wait for a fresh cross up. One cash sleeve per symbol.",
         "params": [
-            {"key": "fast", "label": "Fast SMA", "type": "int_list", "default": [10, 20, 50]},
-            {"key": "slow", "label": "Slow SMA", "type": "int_list", "default": [50, 100, 200]},
-            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none"},
+            {"key": "fast", "label": "Fast SMA", "type": "int_list", "default": [10, 20, 50], "range": [5, 100, 5]},
+            {"key": "slow", "label": "Slow SMA", "type": "int_list", "default": [50, 100, 200], "range": [20, 300, 10]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none", "range": [0, 15, 5]},
         ],
     },
     {
@@ -89,8 +92,8 @@ STRATEGIES: list[dict[str, Any]] = [
         "group": "per_symbol",
         "description": "Faber-style: long while the close is above the SMA, cash otherwise. The paper fund's 200-day trend strategy is window 200.",
         "params": [
-            {"key": "window", "label": "SMA window", "type": "int_list", "default": [100, 150, 200]},
-            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0], "help": "0 = none"},
+            {"key": "window", "label": "SMA window", "type": "int_list", "default": [100, 150, 200], "range": [20, 300, 10]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0], "help": "0 = none", "range": [0, 15, 5]},
         ],
     },
     {
@@ -99,11 +102,11 @@ STRATEGIES: list[dict[str, Any]] = [
         "group": "per_symbol",
         "description": "Buy when Wilder RSI closes below the entry level; sell above the exit level, on a stop, or after max hold days. No trend filter.",
         "params": [
-            {"key": "rsi_window", "label": "RSI window", "type": "int_list", "default": [2, 14]},
-            {"key": "entry", "label": "Entry RSI <", "type": "float_list", "default": [10, 30]},
-            {"key": "exit", "label": "Exit RSI >", "type": "float_list", "default": [70]},
-            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0, 5], "help": "0 = none"},
-            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none"},
+            {"key": "rsi_window", "label": "RSI window", "type": "int_list", "default": [2, 14], "range": [2, 14, 1]},
+            {"key": "entry", "label": "Entry RSI <", "type": "float_list", "default": [10, 30], "range": [5, 40, 5]},
+            {"key": "exit", "label": "Exit RSI >", "type": "float_list", "default": [70], "range": [55, 95, 5]},
+            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0, 5], "help": "0 = none", "range": [0, 20, 5]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none", "range": [0, 15, 5]},
         ],
     },
     {
@@ -112,12 +115,50 @@ STRATEGIES: list[dict[str, Any]] = [
         "group": "per_symbol",
         "description": "Mean-revert only in an uptrend: buy when RSI is below the entry level and the close is above the trend SMA; sell when RSI is above the exit level, the close drops under the SMA, a stop hits, or max hold days pass.",
         "params": [
-            {"key": "rsi_window", "label": "RSI window", "type": "int_list", "default": [2, 14]},
-            {"key": "entry", "label": "Entry RSI <", "type": "float_list", "default": [10, 30]},
-            {"key": "exit", "label": "Exit RSI >", "type": "float_list", "default": [70]},
-            {"key": "trend_window", "label": "Trend SMA", "type": "int_list", "default": [200]},
-            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0, 5], "help": "0 = none"},
-            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none"},
+            {"key": "rsi_window", "label": "RSI window", "type": "int_list", "default": [2, 14], "range": [2, 14, 1]},
+            {"key": "entry", "label": "Entry RSI <", "type": "float_list", "default": [10, 30], "range": [5, 40, 5]},
+            {"key": "exit", "label": "Exit RSI >", "type": "float_list", "default": [70], "range": [55, 95, 5]},
+            {"key": "trend_window", "label": "Trend SMA", "type": "int_list", "default": [200], "range": [50, 300, 50]},
+            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0, 5], "help": "0 = none", "range": [0, 20, 5]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0, 8], "help": "0 = none", "range": [0, 15, 5]},
+        ],
+    },
+    {
+        "id": "double7",
+        "label": "Double 7s (Connors)",
+        "group": "per_symbol",
+        "description": "Buy when the close is the lowest close of the last N days and above the trend SMA; sell when the close is the highest close of the last N days. Connors' ETF pullback rule; N = 7 in the book. Trend SMA 0 = no filter.",
+        "params": [
+            {"key": "lookback", "label": "N-day low / high", "type": "int_list", "default": [7], "range": [3, 20, 1]},
+            {"key": "trend_window", "label": "Trend SMA", "type": "int_list", "default": [200], "help": "0 = none", "range": [0, 300, 50]},
+            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0], "help": "0 = none", "range": [0, 20, 5]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0], "help": "0 = none", "range": [0, 15, 5]},
+        ],
+    },
+    {
+        "id": "bollinger",
+        "label": "Bollinger mean reversion",
+        "group": "per_symbol",
+        "description": "Buy when the close drops below the lower band (SMA − k·σ); sell when it closes back above the middle band (exit k = 0) or the upper band at exit k. Optional trend SMA filter (0 = none). Population σ over the same window.",
+        "params": [
+            {"key": "window", "label": "Band window", "type": "int_list", "default": [20], "range": [10, 60, 5]},
+            {"key": "k", "label": "Entry k (σ)", "type": "float_list", "default": [2, 2.5], "range": [1, 3, 0.25]},
+            {"key": "exit_k", "label": "Exit k (σ)", "type": "float_list", "default": [0], "help": "0 = middle band", "range": [0, 2, 0.5]},
+            {"key": "trend_window", "label": "Trend SMA", "type": "int_list", "default": [0, 200], "help": "0 = none", "range": [0, 300, 50]},
+            {"key": "max_hold", "label": "Max hold days", "type": "int_list", "default": [0], "help": "0 = none", "range": [0, 20, 5]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0], "help": "0 = none", "range": [0, 15, 5]},
+        ],
+    },
+    {
+        "id": "breakout",
+        "label": "Donchian breakout (Turtle)",
+        "group": "per_symbol",
+        "description": "Buy when the close exceeds the highest close of the prior N entry days; sell when it drops below the lowest close of the prior M exit days. Turtle system 1 is 20/10, system 2 is 55/20. Optional trend SMA filter (0 = none).",
+        "params": [
+            {"key": "entry", "label": "Entry channel days", "type": "int_list", "default": [20, 55], "range": [10, 120, 5]},
+            {"key": "exit", "label": "Exit channel days", "type": "int_list", "default": [10, 20], "range": [5, 60, 5]},
+            {"key": "trend_window", "label": "Trend SMA", "type": "int_list", "default": [0], "help": "0 = none", "range": [0, 300, 50]},
+            {"key": "stop_loss", "label": "Stop loss %", "type": "float_list", "default": [0], "help": "0 = none", "range": [0, 15, 5]},
         ],
     },
     {
@@ -126,8 +167,8 @@ STRATEGIES: list[dict[str, Any]] = [
         "group": "portfolio",
         "description": "On the first trading day of each month rank the symbols by trailing return at the prior close and hold the top N with positive momentum at 1/N each. Empty slots go to the defensive symbol, or cash when blank. Lookback 0 = accelerated momentum (average of 1, 3, and 6-month returns). SPY + EFA, top 1, defensive SHY is dual momentum; the 11 sector ETFs, top 3, is sector rotation.",
         "params": [
-            {"key": "lookback", "label": "Lookback days", "type": "int_list", "default": [63, 126, 252], "help": "0 = 1/3/6m average"},
-            {"key": "top_n", "label": "Hold top N", "type": "int_list", "default": [1, 2]},
+            {"key": "lookback", "label": "Lookback days", "type": "int_list", "default": [63, 126, 252], "help": "0 = 1/3/6m average", "range": [0, 252, 21]},
+            {"key": "top_n", "label": "Hold top N", "type": "int_list", "default": [1, 2], "range": [1, 4, 1]},
             {"key": "defensive", "label": "Defensive symbol", "type": "symbol", "default": "", "help": "blank = cash"},
         ],
     },
@@ -135,6 +176,55 @@ STRATEGIES: list[dict[str, Any]] = [
 _SPEC_BY_ID = {s["id"]: s for s in STRATEGIES}
 
 PRESETS: list[dict[str, Any]] = [
+    {
+        "id": "best_trend150",
+        "label": "★ Conservative: SPY above SMA 150 (best Sharpe, half the drawdown)",
+        "symbols": ["SPY"],
+        "strategy": "trend_sma",
+        "params": {"window": [150], "stop_loss": [0]},
+    },
+    {
+        "id": "best_gem_accel",
+        "label": "★ Lowest turnover: accelerated dual momentum SPY / EFA, SHY fallback",
+        "symbols": ["SPY", "EFA"],
+        "strategy": "momentum_rot",
+        "params": {"lookback": [0], "top_n": [1], "defensive": "SHY"},
+    },
+    {
+        "id": "best_sector252",
+        "label": "★ Aggressive: 12-month sector rotation, top 2 of 11",
+        "symbols": list(SECTOR_ETFS),
+        "strategy": "momentum_rot",
+        "params": {"lookback": [252], "top_n": [2], "defensive": ""},
+    },
+    {
+        "id": "best_rsi2_overlay",
+        "label": "★ Overlay: RSI(2) < 15 in an uptrend, exit > 80 (high win rate, low exposure)",
+        "symbols": ["SPY", "QQQ"],
+        "strategy": "rsi_trend",
+        "params": {"rsi_window": [2], "entry": [15], "exit": [80], "trend_window": [200], "max_hold": [0], "stop_loss": [0]},
+    },
+    {
+        "id": "double7",
+        "label": "Connors Double 7s on SPY, QQQ",
+        "symbols": ["SPY", "QQQ"],
+        "strategy": "double7",
+        "params": {"lookback": [5, 7, 10], "trend_window": [200], "max_hold": [0], "stop_loss": [0]},
+    },
+    {
+        "id": "bollinger",
+        "label": "Bollinger(20, 2) pullbacks on SPY, QQQ",
+        "symbols": ["SPY", "QQQ"],
+        "strategy": "bollinger",
+        "params": {"window": [20], "k": [2, 2.5], "exit_k": [0], "trend_window": [0, 200], "max_hold": [0], "stop_loss": [0]},
+    },
+    {
+        "id": "turtle",
+        "label": "Turtle breakout 20/10 and 55/20 on SPY, QQQ, IWM",
+        "symbols": ["SPY", "QQQ", "IWM"],
+        "strategy": "breakout",
+        "params": {"entry": [20, 55], "exit": [10, 20], "trend_window": [0], "stop_loss": [0]},
+    },
     {
         "id": "faber_spy",
         "label": "Faber trend on SPY (SMA 100–250)",
@@ -280,32 +370,50 @@ def _expand_grid(spec: dict[str, Any], params: dict[str, Any], n_symbols: int) -
     for values in product(*(vals for _, vals in axes)) if axes else [()]:
         combo = dict(scalars)
         for (key, _), v in zip(axes, values):
-            combo[key] = int(v) if key in ("fast", "slow", "window", "rsi_window", "trend_window", "max_hold", "lookback", "top_n") else v
+            is_int = key in INT_KEYS or (spec["id"] == "breakout" and key in ("entry", "exit"))
+            combo[key] = int(v) if is_int else v
         combos.append(combo)
 
+    valid = [c for c in combos if _valid_combo(spec, c, n_symbols)]
+    if not valid:
+        raise HTTPException(422, f"{spec['label']}: no valid parameter combination (fast must be below slow; breakout entry above exit)")
+    return valid
+
+
+def _valid_combo(spec: dict[str, Any], c: dict[str, Any], n_symbols: int) -> bool:
+    """Raise on out-of-range values; return False for combinations that are legal to type but
+    meaningless (fast >= slow, entry channel <= exit channel) so grids skip them quietly."""
     sid = spec["id"]
-    valid: list[dict[str, Any]] = []
-    for c in combos:
-        for key in ("fast", "slow", "window", "rsi_window", "trend_window"):
-            if key in c and not (1 <= c[key] <= 1000):
-                raise HTTPException(422, f"{key} must be between 1 and 1000")
-        if "stop_loss" in c and not (0 <= c["stop_loss"] < 100):
-            raise HTTPException(422, "stop_loss must be a percent between 0 and 99")
-        if "max_hold" in c and not (0 <= c["max_hold"] <= 500):
-            raise HTTPException(422, "max_hold must be between 0 and 500")
+    for key in ("fast", "slow", "window", "rsi_window", "lookback"):
+        if key in c and sid != "momentum_rot" and not (1 <= c[key] <= 1000):
+            raise HTTPException(422, f"{key} must be between 1 and 1000")
+    if "trend_window" in c and not (0 <= c["trend_window"] <= 1000):
+        raise HTTPException(422, "trend_window must be between 0 (none) and 1000")
+    if "stop_loss" in c and not (0 <= c["stop_loss"] < 100):
+        raise HTTPException(422, "stop_loss must be a percent between 0 and 99")
+    if "max_hold" in c and not (0 <= c["max_hold"] <= 500):
+        raise HTTPException(422, "max_hold must be between 0 and 500")
+    if sid in ("rsi_reversion", "rsi_trend"):
         if "entry" in c and "exit" in c and not (0 < c["entry"] < c["exit"] < 100):
             raise HTTPException(422, "entry RSI must be above 0 and below the exit RSI, which must be below 100")
-        if sid == "sma_cross" and c["fast"] >= c["slow"]:
-            continue  # skip rather than fail: grids naturally include fast >= slow pairs
-        if sid == "momentum_rot":
-            if not (0 <= c["lookback"] <= 1260):
-                raise HTTPException(422, "lookback must be between 0 and 1260 days")
-            if not (1 <= c["top_n"] <= n_symbols):
-                raise HTTPException(422, f"top_n must be between 1 and the number of symbols ({n_symbols})")
-        valid.append(c)
-    if not valid:
-        raise HTTPException(422, f"{spec['label']}: no valid parameter combination (fast must be below slow)")
-    return valid
+    if sid == "sma_cross" and c["fast"] >= c["slow"]:
+        return False
+    if sid == "bollinger":
+        if not (0.25 <= c["k"] <= 5):
+            raise HTTPException(422, "Bollinger entry k must be between 0.25 and 5")
+        if not (0 <= c["exit_k"] <= 5):
+            raise HTTPException(422, "Bollinger exit k must be between 0 and 5")
+    if sid == "breakout":
+        if not (2 <= c["entry"] <= 1000 and 2 <= c["exit"] <= 1000):
+            raise HTTPException(422, "breakout channels must be between 2 and 1000 days")
+        if c["exit"] >= c["entry"]:
+            return False
+    if sid == "momentum_rot":
+        if not (0 <= c["lookback"] <= 1260):
+            raise HTTPException(422, "lookback must be between 0 and 1260 days")
+        if not (1 <= c["top_n"] <= n_symbols):
+            raise HTTPException(422, f"top_n must be between 1 and the number of symbols ({n_symbols})")
+    return True
 
 
 def _param_label(sid: str, c: dict[str, Any]) -> str:
@@ -321,6 +429,14 @@ def _param_label(sid: str, c: dict[str, Any]) -> str:
         return f"RSI({c['rsi_window']}) <{c['entry']:g} / >{c['exit']:g}{hold}{stop}"
     if sid == "rsi_trend":
         return f"RSI({c['rsi_window']}) <{c['entry']:g} / >{c['exit']:g} · SMA {c['trend_window']}{hold}{stop}"
+    trend = f" · SMA {c['trend_window']}" if c.get("trend_window") else ""
+    if sid == "double7":
+        return f"{c['lookback']}-day low/high{trend}{hold}{stop}"
+    if sid == "bollinger":
+        ex = "mid" if not c.get("exit_k") else f"+{c['exit_k']:g}σ"
+        return f"BB({c['window']}, {c['k']:g}σ) → {ex}{trend}{hold}{stop}"
+    if sid == "breakout":
+        return f"breakout {c['entry']}/{c['exit']}{trend}{stop}"
     if sid == "momentum_rot":
         lb = "1/3/6m" if c["lookback"] == 0 else f"{c['lookback']}d"
         d = f" · {c['defensive']} fallback" if c.get("defensive") else " · cash fallback"
@@ -660,6 +776,36 @@ def run_candidate(
                 s = sma(x, combo["trend_window"])
                 entry = (r < combo["entry"]) & (x > s)
                 exit_ = (r > combo["exit"]) | (x < s)
+            elif sid == "double7":
+                n = int(combo["lookback"])
+                ser = pd.Series(x)
+                lo = ser.rolling(n).min().to_numpy()
+                hi = ser.rolling(n).max().to_numpy()
+                entry = x <= lo
+                exit_ = x >= hi
+                tw = int(combo.get("trend_window") or 0)
+                if tw:
+                    entry = entry & (x > sma(x, tw))
+            elif sid == "bollinger":
+                n = int(combo["window"])
+                ser = pd.Series(x)
+                mid = ser.rolling(n).mean().to_numpy()
+                sd = ser.rolling(n).std(ddof=0).to_numpy()
+                entry = x < mid - float(combo["k"]) * sd
+                ek = float(combo.get("exit_k") or 0)
+                exit_ = x > mid + ek * sd if ek > 0 else x > mid
+                tw = int(combo.get("trend_window") or 0)
+                if tw:
+                    entry = entry & (x > sma(x, tw))
+            elif sid == "breakout":
+                ser = pd.Series(x)
+                hi = ser.rolling(int(combo["entry"])).max().shift(1).to_numpy()
+                lo = ser.rolling(int(combo["exit"])).min().shift(1).to_numpy()
+                entry = x > hi
+                exit_ = x < lo
+                tw = int(combo.get("trend_window") or 0)
+                if tw:
+                    entry = entry & (x > sma(x, tw))
             else:
                 raise HTTPException(422, f"Unknown strategy {sid}")
             entry = np.nan_to_num(entry.astype(float), nan=0.0).astype(bool)
@@ -738,10 +884,11 @@ def run_candidate(
 
 
 def _rank_value(r: dict[str, Any], key: str) -> float:
+    """Higher is better for every rank key. Drawdowns are negative percentages, so the
+    shallowest drawdown is the largest value."""
     v = r.get(key)
-    reverse = key != "max_drawdown"
     if v is None:
-        return -1e18 if reverse else 1e18
+        return -1e18
     return float(v)
 
 
@@ -780,7 +927,7 @@ def walk_forward(
     """Re-select the best combination on each training slice and stitch the out-of-sample folds."""
     n = len(dates)
     train0, folds = _fold_bounds(n, cfg)
-    reverse = key != "max_drawdown"
+    reverse = True
     oos = np.full(n, np.nan)
     segments: list[dict[str, Any]] = []
     level = cash0
@@ -880,69 +1027,78 @@ def backtest_meta() -> dict[str, Any]:
     }
 
 
-@router.post("")
-def run_backtest(body: BtBody) -> dict[str, Any]:
-    t0 = time.time()
-    symbols = list(dict.fromkeys(_sym(s) for s in body.symbols if _sym(s)))
+# --------------------------------------------------------------------------- shared pipeline
+
+
+class _Ctx:
+    """Everything a run needs once the data is loaded."""
+
+    def __init__(self, symbols: list[str], fetch_set: list[str], start: date, end: date, cash0: float, fees_bps: float, slippage_bps: float):
+        self.symbols = symbols
+        self.fetch_set = fetch_set
+        self.start = start
+        self.end = end
+        self.cash0 = cash0
+        self.fees_bps = fees_bps
+        self.slippage_bps = slippage_bps
+        self.fees = fees_bps / 10_000.0
+        self.slip = slippage_bps / 10_000.0
+        self.close_full, self.sources = load_closes(fetch_set)
+        idx = list(self.close_full.index)
+        self.data_start = idx[0]
+        start_idx = next((i for i, d in enumerate(idx) if d >= start), None)
+        end_idx = max((i for i, d in enumerate(idx) if d <= end), default=None)
+        if start_idx is None or end_idx is None or end_idx - start_idx + 1 < MIN_BARS:
+            raise HTTPException(422, f"Fewer than {MIN_BARS} daily bars between {start} and {end} (data begins {self.data_start})")
+        self.start_idx = start_idx
+        self.close_win = self.close_full.iloc[: end_idx + 1]
+        self.dates = idx[start_idx : end_idx + 1]
+        self.dates_unix = [int(datetime(d.year, d.month, d.day, 16, 0, tzinfo=_ET).timestamp()) for d in self.dates]
+        bench_px = self.close_win[symbols].to_numpy(dtype=float)[start_idx:]
+        self.bench_eq = cash0 * np.mean(bench_px / bench_px[0], axis=1)
+        self.bench_m = metrics(self.bench_eq, self.dates, [], 1.0, cash0)
+
+
+def _parse_window(symbols_raw: list[str], start_raw: str | None, end_raw: str | None) -> tuple[list[str], date, date]:
+    symbols = list(dict.fromkeys(_sym(s) for s in symbols_raw if _sym(s)))
     if not symbols:
         raise HTTPException(422, "At least one symbol is required")
     if len(symbols) > MAX_SYMBOLS:
         raise HTTPException(422, f"At most {MAX_SYMBOLS} symbols")
     today = datetime.now(_ET).date()
-    start = _parse_date(body.start, date(2017, 1, 1))
-    end = _parse_date(body.end, today)
+    start = _parse_date(start_raw, date(2017, 1, 1))
+    end = _parse_date(end_raw, today)
     if start >= end:
         raise HTTPException(422, "start must be before end")
+    return symbols, start, end
 
-    # expand grids first so bad params fail before any download
-    plan: list[tuple[dict[str, Any], dict[str, Any], list[str]]] = []
-    fetch_set: list[str] = list(symbols)
-    for st in body.strategies:
-        spec = _SPEC_BY_ID.get(st.kind)
-        if not spec:
-            raise HTTPException(422, f"Unknown strategy {st.kind!r}; valid: {', '.join(_SPEC_BY_ID)}")
-        combos = _expand_grid(spec, st.params or {}, len(symbols))
-        for c in combos:
-            trade_syms = list(symbols)
-            d = _sym(str(c.get("defensive") or "")) if spec["id"] == "momentum_rot" else ""
-            if d:
-                if d not in trade_syms:
-                    trade_syms.append(d)
-                if d not in fetch_set:
-                    fetch_set.append(d)
-            plan.append((spec, c, trade_syms))
-    if len(plan) > body.max_runs:
-        raise HTTPException(422, f"{len(plan)} parameter combinations exceed the limit of {body.max_runs}; narrow the grid")
 
-    close_full, sources = load_closes(fetch_set)
-    idx = list(close_full.index)
-    data_start = idx[0]
-    start_idx = next((i for i, d in enumerate(idx) if d >= start), None)
-    end_idx = max((i for i, d in enumerate(idx) if d <= end), default=None)
-    if start_idx is None or end_idx is None or end_idx - start_idx + 1 < MIN_BARS:
-        raise HTTPException(422, f"Fewer than {MIN_BARS} daily bars between {start} and {end} (data begins {data_start})")
-    close_win = close_full.iloc[: end_idx + 1]
-    dates = idx[start_idx : end_idx + 1]
-    dates_unix = [int(datetime(d.year, d.month, d.day, 16, 0, tzinfo=_ET).timestamp()) for d in dates]
+def _plan_entry(spec: dict[str, Any], combo: dict[str, Any], symbols: list[str], fetch_set: list[str]) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    trade_syms = list(symbols)
+    d = _sym(str(combo.get("defensive") or "")) if spec["id"] == "momentum_rot" else ""
+    if d:
+        if d not in trade_syms:
+            trade_syms.append(d)
+        if d not in fetch_set:
+            fetch_set.append(d)
+    return spec, combo, trade_syms
 
-    fees = body.fees_bps / 10_000.0
-    slip = body.slippage_bps / 10_000.0
-    cash0 = float(body.initial_cash)
 
+def _evaluate(ctx: _Ctx, plan: list[tuple[dict[str, Any], dict[str, Any], list[str]]], id_offset: int = 0) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     for k, (spec, combo, trade_syms) in enumerate(plan):
         try:
             eq, trades, exposure = run_candidate(
-                close_win, start_idx, spec["id"], combo, cash0=cash0, fees=fees, slip=slip, trade_symbols=trade_syms
+                ctx.close_win, ctx.start_idx, spec["id"], combo, cash0=ctx.cash0, fees=ctx.fees, slip=ctx.slip, trade_symbols=trade_syms
             )
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
             raise HTTPException(500, f"{spec['label']} {combo}: {e}") from e
-        m = metrics(eq, dates, trades, exposure, cash0)
+        m = metrics(eq, ctx.dates, trades, exposure, ctx.cash0)
         runs.append(
             {
-                "id": f"{spec['id']}:{k}",
+                "id": f"{spec['id']}:{id_offset + k}",
                 "strategy": spec["id"],
                 "strategy_label": spec["label"],
                 "params": combo,
@@ -954,18 +1110,22 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
                 "_exposure": exposure,
             }
         )
+    return runs
 
-    # benchmark: equal-weight buy & hold of the requested symbols, no costs
-    bench_px = close_win[symbols].to_numpy(dtype=float)[start_idx:]
-    bench_eq = cash0 * np.mean(bench_px / bench_px[0], axis=1)
-    bench_m = metrics(bench_eq, dates, [], 1.0, cash0)
 
-    key = body.rank_by
-    reverse = key != "max_drawdown"
-    runs.sort(key=lambda r: _rank_value(r, key), reverse=reverse)
-    wf = walk_forward(runs, dates, bench_eq, cash0, key, body.walk_forward) if body.walk_forward else None
+def _finish(
+    ctx: _Ctx,
+    runs: list[dict[str, Any]],
+    key: str,
+    wf_cfg: WalkForward | None,
+    plan: list[tuple[dict[str, Any], dict[str, Any], list[str]]],
+    t0: float,
+) -> dict[str, Any]:
+    runs.sort(key=lambda r: _rank_value(r, key), reverse=True)
+    wf = walk_forward(runs, ctx.dates, ctx.bench_eq, ctx.cash0, key, wf_cfg) if wf_cfg else None
     for r in runs:
-        r["excess_cagr"] = round(float(r.get("cagr", 0) or 0) - float(bench_m.get("cagr", 0) or 0), 2)
+        r["excess_cagr"] = round(float(r.get("cagr", 0) or 0) - float(ctx.bench_m.get("cagr", 0) or 0), 2)
+    dates = ctx.dates
     out_runs: list[dict[str, Any]] = []
     for pos, r in enumerate(runs):
         item = {k: v for k, v in r.items() if not k.startswith("_")}
@@ -988,13 +1148,13 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
     warnings = [
         "In-sample parameter ranking on one price path. No walk-forward or out-of-sample test; the best cell is the most over-fit cell.",
     ]
-    if start_idx == 0 and data_start > start:
-        warnings.append(f"History starts {data_start}, later than the requested {start}; indicators warmed up inside the window.")
+    if ctx.start_idx == 0 and ctx.data_start > ctx.start:
+        warnings.append(f"History starts {ctx.data_start}, later than the requested {ctx.start}; indicators warmed up inside the window.")
     if best and (best.get("trades") or 0) < 30:
         warnings.append("Best run closed fewer than 30 trades; win rate and profit factor are thin samples.")
-    if any(s["group"] == "portfolio" and s["id"] == "momentum_rot" for s, _, _ in plan):
+    if any(s["id"] == "momentum_rot" for s, _, _ in plan):
         warnings.append("Rotation trade counts are full exits of a symbol at a rebalance; partial trims are not counted.")
-    if any(v == "polygon" for v in sources.values()):
+    if any(v == "polygon" for v in ctx.sources.values()):
         warnings.append("Some history came from Polygon (Yahoo was rate limited); free plans return about two years, which shortens the window.")
     if wf:
         warnings[0] = (
@@ -1008,24 +1168,24 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
 
     return {
         "engine": ENGINE,
-        "symbols": symbols,
-        "fetched": fetch_set,
-        "sources": sources,
+        "symbols": ctx.symbols,
+        "fetched": ctx.fetch_set,
+        "sources": ctx.sources,
         "start": dates[0].isoformat(),
         "end": dates[-1].isoformat(),
-        "requested_start": start.isoformat(),
-        "data_start": data_start.isoformat(),
+        "requested_start": ctx.start.isoformat(),
+        "data_start": ctx.data_start.isoformat(),
         "bars": len(dates),
-        "dates": dates_unix,
-        "initial_cash": cash0,
-        "fees_bps": body.fees_bps,
-        "slippage_bps": body.slippage_bps,
+        "dates": ctx.dates_unix,
+        "initial_cash": ctx.cash0,
+        "fees_bps": ctx.fees_bps,
+        "slippage_bps": ctx.slippage_bps,
         "rank_by": key,
         "combination_count": len(out_runs),
         "equity_runs": min(EQUITY_RUNS, len(out_runs)),
         "best_id": best["id"] if best else None,
         "runs": out_runs,
-        "benchmark": {"label": "Equal-weight buy & hold, no costs", "equity": [round(float(v), 2) for v in bench_eq], **bench_m},
+        "benchmark": {"label": "Equal-weight buy & hold, no costs", "equity": [round(float(v), 2) for v in ctx.bench_eq], **ctx.bench_m},
         "walk_forward": wf,
         "warnings": warnings,
         "assumptions": {
@@ -1043,3 +1203,294 @@ def run_backtest(body: BtBody) -> dict[str, Any]:
         "elapsed_ms": int((time.time() - t0) * 1000),
         "note": "Hypothetical, in-sample research. Not financial advice.",
     }
+
+
+@router.post("")
+def run_backtest(body: BtBody) -> dict[str, Any]:
+    t0 = time.time()
+    symbols, start, end = _parse_window(body.symbols, body.start, body.end)
+    # expand grids first so bad params fail before any download
+    plan: list[tuple[dict[str, Any], dict[str, Any], list[str]]] = []
+    fetch_set: list[str] = list(symbols)
+    for st in body.strategies:
+        spec = _SPEC_BY_ID.get(st.kind)
+        if not spec:
+            raise HTTPException(422, f"Unknown strategy {st.kind!r}; valid: {', '.join(_SPEC_BY_ID)}")
+        for c in _expand_grid(spec, st.params or {}, len(symbols)):
+            plan.append(_plan_entry(spec, c, symbols, fetch_set))
+    if len(plan) > body.max_runs:
+        raise HTTPException(422, f"{len(plan)} parameter combinations exceed the limit of {body.max_runs}; narrow the grid")
+    ctx = _Ctx(symbols, fetch_set, start, end, float(body.initial_cash), body.fees_bps, body.slippage_bps)
+    runs = _evaluate(ctx, plan)
+    return _finish(ctx, runs, body.rank_by, body.walk_forward, plan, t0)
+
+
+# --------------------------------------------------------------------------- parameter search
+
+
+class OptAxis(BaseModel):
+    min: float
+    max: float
+    step: float = Field(gt=0)
+
+
+class OptBody(BaseModel):
+    symbols: list[str] = Field(default_factory=lambda: ["SPY"], min_length=1, max_length=MAX_SYMBOLS)
+    start: str = "2017-01-01"
+    end: str | None = None
+    strategy: str = Field(min_length=1, max_length=32)
+    space: dict[str, OptAxis | list[float]] = Field(default_factory=dict)
+    fixed: dict[str, Any] = Field(default_factory=dict)
+    objective: RankKey = "sharpe"
+    budget: int = Field(default=200, ge=20, le=MAX_OPT_EVALS)
+    seed: int = 42
+    initial_cash: float = Field(default=100_000, gt=0, le=1e12)
+    fees_bps: float = Field(default=5, ge=0, le=200)
+    slippage_bps: float = Field(default=10, ge=0, le=200)
+    walk_forward: WalkForward | None = None
+
+
+def _axis_values(p: dict[str, Any], ax: OptAxis | list[float] | None) -> list[Any]:
+    """Grid values for one parameter: explicit list, an OptAxis, or the spec's default range."""
+    if isinstance(ax, list):
+        vals = _coerce_list(ax, p["type"], p["key"])
+    else:
+        if ax is None:
+            rng = p.get("range")
+            if not rng:
+                return [p["default"][0] if isinstance(p["default"], list) else p["default"]]
+            lo, hi, step = rng
+        else:
+            lo, hi, step = ax.min, ax.max, ax.step
+        if hi < lo:
+            raise HTTPException(422, f"{p['key']}: max is below min")
+        n = int(math.floor((hi - lo) / step + 1e-9)) + 1
+        if n > 200:
+            raise HTTPException(422, f"{p['key']}: more than 200 steps; widen the step")
+        vals = _coerce_list([lo + i * step for i in range(n)], p["type"], p["key"])
+    if p["type"] == "int_list":
+        vals = [int(v) for v in vals]
+    return vals
+
+
+def _search_space(spec: dict[str, Any], body: OptBody) -> tuple[list[tuple[str, list[Any]]], dict[str, Any]]:
+    axes: list[tuple[str, list[Any]]] = []
+    fixed: dict[str, Any] = {}
+    for p in spec["params"]:
+        key = p["key"]
+        if p["type"] == "symbol":
+            fixed[key] = _sym(str(body.fixed.get(key, p["default"]) or ""))
+            continue
+        if key in body.fixed:
+            v = _coerce_list(_as_list(body.fixed[key]), p["type"], key)
+            if len(v) != 1:
+                raise HTTPException(422, f"fixed.{key} must be a single value")
+            fixed[key] = int(v[0]) if p["type"] == "int_list" else v[0]
+            continue
+        vals = _axis_values(p, body.space.get(key))
+        if len(vals) == 1:
+            fixed[key] = vals[0]
+        else:
+            axes.append((key, vals))
+    return axes, fixed
+
+
+def _combo_from(axes: list[tuple[str, list[Any]]], fixed: dict[str, Any], idx: tuple[int, ...]) -> dict[str, Any]:
+    c = dict(fixed)
+    for (key, vals), i in zip(axes, idx):
+        c[key] = vals[i]
+    return c
+
+
+def _neighbors(idx: tuple[int, ...], axes: list[tuple[str, list[Any]]]) -> list[tuple[int, ...]]:
+    out: list[tuple[int, ...]] = []
+    for d, (_, vals) in enumerate(axes):
+        for delta in (-1, 1):
+            j = idx[d] + delta
+            if 0 <= j < len(vals):
+                n = list(idx)
+                n[d] = j
+                out.append(tuple(n))
+    return out
+
+
+@router.post("/optimize")
+def optimize(body: OptBody) -> dict[str, Any]:
+    """Random sampling plus coordinate hill-climbing over a strategy's parameter space, with a
+    neighbourhood-stability check and one-dimensional sensitivity slices around the winner."""
+    t0 = time.time()
+    spec = _SPEC_BY_ID.get(body.strategy)
+    if not spec:
+        raise HTTPException(422, f"Unknown strategy {body.strategy!r}; valid: {', '.join(_SPEC_BY_ID)}")
+    symbols, start, end = _parse_window(body.symbols, body.start, body.end)
+    axes, fixed = _search_space(spec, body)
+    grid_size = 1
+    for _, vals in axes:
+        grid_size *= len(vals)
+    key = body.objective
+    reverse = True
+    rng = np.random.default_rng(body.seed)
+
+    fetch_set: list[str] = list(symbols)
+    evaluated: dict[tuple[int, ...], dict[str, Any]] = {}
+    all_runs: list[dict[str, Any]] = []
+    ctx: _Ctx | None = None
+    phases: list[dict[str, Any]] = []
+
+    def evaluate_points(points: list[tuple[int, ...]], phase: str) -> None:
+        nonlocal ctx
+        fresh = [p for p in dict.fromkeys(points) if p not in evaluated]
+        plan = []
+        keep: list[tuple[int, ...]] = []
+        for pt in fresh:
+            combo = _combo_from(axes, fixed, pt)
+            try:
+                ok = _valid_combo(spec, combo, len(symbols))
+            except HTTPException:
+                ok = False
+            if not ok:
+                evaluated[pt] = {"invalid": True}
+                continue
+            plan.append(_plan_entry(spec, combo, symbols, fetch_set))
+            keep.append(pt)
+        if not plan:
+            return
+        if ctx is None:
+            ctx = _Ctx(symbols, fetch_set, start, end, float(body.initial_cash), body.fees_bps, body.slippage_bps)
+        runs = _evaluate(ctx, plan, id_offset=len(all_runs))
+        for pt, r in zip(keep, runs):
+            r["_phase"] = phase
+            evaluated[pt] = r
+            all_runs.append(r)
+        phases.append({"phase": phase, "evaluated": len(runs)})
+
+    def valid_count() -> int:
+        return sum(1 for v in evaluated.values() if not v.get("invalid"))
+
+    def score(r: dict[str, Any]) -> float:
+        return _rank_value(r, key)
+
+    def ranked() -> list[tuple[tuple[int, ...], dict[str, Any]]]:
+        items = [(pt, r) for pt, r in evaluated.items() if not r.get("invalid")]
+        items.sort(key=lambda x: score(x[1]), reverse=reverse)
+        return items
+
+    exhaustive = grid_size <= body.budget or not axes
+    if exhaustive:
+        pts = list(product(*(range(len(vals)) for _, vals in axes))) if axes else [()]
+        evaluate_points(pts, "exhaustive")
+    else:
+        n_random = max(10, int(body.budget * 0.6))
+        # sample distinct index tuples without materialising the whole grid
+        seen: set[tuple[int, ...]] = set()
+        pts: list[tuple[int, ...]] = []
+        tries = 0
+        while len(pts) < n_random and tries < n_random * 20:
+            tries += 1
+            pt = tuple(int(rng.integers(len(vals))) for _, vals in axes)
+            if pt not in seen:
+                seen.add(pt)
+                pts.append(pt)
+        evaluate_points(pts, "random")
+        # coordinate hill-climb from the current leaders until the budget is spent
+        rounds = 0
+        while valid_count() < body.budget and rounds < 40:
+            rounds += 1
+            leaders = [pt for pt, _ in ranked()[:5]]
+            cand: list[tuple[int, ...]] = []
+            for pt in leaders:
+                cand.extend(n for n in _neighbors(pt, axes) if n not in evaluated)
+            cand = list(dict.fromkeys(cand))
+            if not cand:
+                break
+            room = body.budget - valid_count()
+            evaluate_points(cand[: max(1, room)], "local")
+
+    if ctx is None or not all_runs:
+        raise HTTPException(422, "No valid parameter combination in the search space")
+
+    # neighbourhood stability for the leaders: mean objective of evaluated ±1-step neighbours
+    top = ranked()[:10]
+    for pt, r in top[:3]:
+        missing = [n for n in _neighbors(pt, axes) if n not in evaluated]
+        if missing and valid_count() < body.budget + 2 * len(axes) * 3:
+            evaluate_points(missing, "neighbourhood")
+    top = ranked()[:10]
+    top_out: list[dict[str, Any]] = []
+    for pt, r in top:
+        nb = [evaluated[n] for n in _neighbors(pt, axes) if n in evaluated and not evaluated[n].get("invalid")]
+        vals = [score(x) for x in nb]
+        own = score(r)
+        nb_mean = float(np.mean(vals)) if vals else None
+        top_out.append(
+            {
+                "id": r["id"],
+                "label": r["label"],
+                "params": r["params"],
+                "objective": round(own, 4),
+                "neighbours": len(vals),
+                "neighbours_mean": round(nb_mean, 4) if nb_mean is not None else None,
+                "neighbours_min": round(min(vals), 4) if vals else None,
+                "stable": nb_mean is not None and nb_mean >= own - 0.2 * max(abs(own), 0.05),
+                "phase": r.get("_phase"),
+                **{k: r.get(k) for k in ("cagr", "sharpe", "sortino", "max_drawdown", "calmar", "trades", "win_rate", "profit_factor", "exposure")},
+            }
+        )
+
+    # one-dimensional sensitivity slices through the winner
+    best_pt, best_run = top[0]
+    sensitivity: list[dict[str, Any]] = []
+    for d, (akey, vals) in enumerate(axes):
+        cols = list(range(len(vals)))
+        if len(cols) > 15:
+            picks = np.linspace(0, len(vals) - 1, 15).round().astype(int).tolist()
+            cols = sorted(set(picks) | {best_pt[d]})
+        pts = []
+        for j in cols:
+            n = list(best_pt)
+            n[d] = j
+            pts.append(tuple(n))
+        evaluate_points(pts, "sensitivity")
+        label = next((p["label"] for p in spec["params"] if p["key"] == akey), akey)
+        sensitivity.append(
+            {
+                "key": akey,
+                "label": label,
+                "best": vals[best_pt[d]],
+                "points": [
+                    {
+                        "value": vals[pt[d]],
+                        "objective": round(score(evaluated[pt]), 4) if pt in evaluated and not evaluated[pt].get("invalid") else None,
+                        "cagr": evaluated[pt].get("cagr") if pt in evaluated and not evaluated[pt].get("invalid") else None,
+                        "max_drawdown": evaluated[pt].get("max_drawdown") if pt in evaluated and not evaluated[pt].get("invalid") else None,
+                        "id": evaluated[pt].get("id") if pt in evaluated else None,
+                    }
+                    for pt in pts
+                ],
+            }
+        )
+
+    plan_ids = [(spec, r["params"], r["symbols"]) for r in all_runs]
+    out = _finish(ctx, all_runs, key, body.walk_forward, plan_ids, t0)
+    stable_top = top_out[0]["stable"] if top_out else None
+    if stable_top is False:
+        out["warnings"].append(
+            "The winner sits on a spike: its neighbouring parameter values score much worse. Prefer a plateau, or the nearest stable row in the search table."
+        )
+    out["search"] = {
+        "method": "exhaustive" if exhaustive else "random 60% + coordinate hill-climb, then neighbourhood and sensitivity slices",
+        "objective": key,
+        "budget": body.budget,
+        "grid_size": grid_size,
+        "exhaustive": exhaustive,
+        "evaluations": len(all_runs),
+        "invalid_skipped": sum(1 for v in evaluated.values() if v.get("invalid")),
+        "phases": phases,
+        "space": {k: v for k, v in axes},
+        "fixed": fixed,
+        "seed": body.seed,
+        "top": top_out,
+        "sensitivity": sensitivity,
+        "best_id": best_run["id"],
+    }
+    return out

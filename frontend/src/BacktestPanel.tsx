@@ -8,6 +8,8 @@ import {
   paramTextFor,
   paramsFromText,
   parseSymbols,
+  rangeLabel,
+  searchSpaceFromText,
   type BtMeta,
   type BtResult,
   type BtRun,
@@ -33,8 +35,56 @@ function tone(n?: number | null) {
   if (n == null) return "";
   return n > 0 ? "up" : n < 0 ? "down" : "";
 }
+function signed(n?: number | null, d = 1) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return `${n > 0 ? "+" : ""}${n.toFixed(d)}`;
+}
 
 type HistoryItem = { id: string; label: string; result: BtResult };
+type ResultTab = "overview" | "ranking" | "walkforward" | "search" | "trades" | "notes";
+
+/** One to three plain sentences that say what the numbers mean. */
+function verdict(result: BtResult, selected: BtRun): string[] {
+  const out: string[] = [];
+  const b = result.benchmark;
+  const wf = result.walk_forward;
+  const ddSaved = b.max_drawdown != null && selected.max_drawdown != null ? selected.max_drawdown - b.max_drawdown : null;
+  if (wf && wf.oos.cagr != null && wf.oos_benchmark.cagr != null) {
+    const gap = wf.oos.cagr - wf.oos_benchmark.cagr;
+    const dd =
+      wf.oos.max_drawdown != null && wf.oos_benchmark.max_drawdown != null ? wf.oos.max_drawdown - wf.oos_benchmark.max_drawdown : null;
+    out.push(
+      `Out of sample (${wf.oos_start} → ${wf.oos_end}) the re-selected rule ${gap >= 0 ? "beat" : "trailed"} buy & hold by ${Math.abs(gap).toFixed(1)} points a year` +
+        (dd != null
+          ? `${dd > 0 ? " and cut the worst drawdown from" : " while the worst drawdown went from"} ${pct(wf.oos_benchmark.max_drawdown, 0)} to ${pct(wf.oos.max_drawdown, 0)}.`
+          : "."),
+    );
+    if (wf.efficiency != null) {
+      out.push(
+        wf.efficiency >= 0.5
+          ? `It kept ${(wf.efficiency * 100).toFixed(0)}% of its in-sample edge, a reasonable sign the rule is not just fitted noise.`
+          : `It kept only ${(wf.efficiency * 100).toFixed(0)}% of its in-sample edge: most of the back-tested return did not survive, the usual signature of over-fitting.`,
+      );
+    }
+  } else {
+    out.push(
+      `In sample, #${selected.rank} ${selected.label} ${selected.excess_cagr >= 0 ? "beat" : "trailed"} buy & hold by ${Math.abs(selected.excess_cagr).toFixed(1)} points a year` +
+        (ddSaved != null
+          ? `${ddSaved > 0 ? " and cut the worst drawdown from" : " while the worst drawdown went from"} ${pct(b.max_drawdown, 0)} to ${pct(selected.max_drawdown, 0)}.`
+          : "."),
+    );
+    out.push("No walk-forward was run, so this is one in-sample path and the best cell is the most over-fit one.");
+  }
+  const top = result.search?.top[0];
+  if (top && top.id === selected.id) {
+    out.push(
+      top.stable
+        ? "The winner sits on a plateau: neighbouring parameter values score about as well."
+        : "The winner is a spike: neighbouring parameter values score much worse, so prefer a stable row on the Search tab.",
+    );
+  }
+  return out;
+}
 
 export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol: string) => void }) {
   const [meta, setMeta] = useState<BtMeta | null>(null);
@@ -50,13 +100,15 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
   const [rankBy, setRankBy] = useState("sharpe");
   const [presetId, setPresetId] = useState("");
   const [fundId, setFundId] = useState("");
-  const [busy, setBusy] = useState<"" | "grid" | "all">("");
+  const [busy, setBusy] = useState<"" | "grid" | "all" | "opt">("");
+  const [budget, setBudget] = useState("200");
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<BtResult | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [logScale, setLogScale] = useState(false);
-  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [advanced, setAdvanced] = useState(true);
+  const [tab, setTab] = useState<ResultTab>("overview");
   const [wfOn, setWfOn] = useState(true);
   const [wfFolds, setWfFolds] = useState("4");
   const [wfTrain, setWfTrain] = useState("50");
@@ -138,6 +190,24 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
     setErr(null);
   }
 
+  const wfBody = wfOn ? { folds: Number(wfFolds) || 4, train_pct: Number(wfTrain) || 50, mode: wfMode } : null;
+  const common = {
+    symbols,
+    start,
+    end: end || null,
+    initial_cash: Number(cash) || 100000,
+    fees_bps: Number(fees) || 0,
+    slippage_bps: Number(slip) || 0,
+    walk_forward: wfBody,
+  };
+
+  function remember(label: string, r: BtResult) {
+    setResult(r);
+    setSelectedId(r.best_id);
+    setTab("overview");
+    setHistory((h) => [{ id: `${Date.now()}`, label, result: r }, ...h].slice(0, 8));
+  }
+
   async function run(mode: "grid" | "all") {
     if (!meta || !spec) return;
     if (!symbols.length) {
@@ -159,24 +229,39 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
             return { kind: s.id, params };
           });
     try {
-      const r = await api.runBacktest({
-        symbols,
-        start,
-        end: end || null,
-        strategies,
-        initial_cash: Number(cash) || 100000,
-        fees_bps: Number(fees) || 0,
-        slippage_bps: Number(slip) || 0,
-        rank_by: rankBy,
-        walk_forward: wfOn ? { folds: Number(wfFolds) || 4, train_pct: Number(wfTrain) || 50, mode: wfMode } : null,
-      });
-      setResult(r);
-      setSelectedId(r.best_id);
-      const label =
+      const r = await api.runBacktest({ ...common, strategies, rank_by: rankBy });
+      remember(
         mode === "grid"
           ? `${spec.label} · ${symbols.join(" ")} · ${r.combination_count} runs`
-          : `All strategies · ${symbols.join(" ")} · ${r.combination_count} runs`;
-      setHistory((h) => [{ id: `${Date.now()}`, label, result: r }, ...h].slice(0, 8));
+          : `All rules · ${symbols.join(" ")} · ${r.combination_count} runs`,
+        r,
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function optimize() {
+    if (!meta || !spec) return;
+    if (!symbols.length) {
+      setErr("Enter at least one symbol");
+      return;
+    }
+    setBusy("opt");
+    setErr(null);
+    const { space, fixed } = searchSpaceFromText(spec, paramText);
+    try {
+      const r = await api.optimizeBacktest({
+        ...common,
+        strategy: spec.id,
+        space,
+        fixed,
+        objective: rankBy,
+        budget: Number(budget) || 200,
+      });
+      remember(`Search · ${spec.label} · ${symbols.join(" ")} · ${r.search?.evaluations ?? r.combination_count} evals`, r);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -189,6 +274,8 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
     return result.runs.find((r) => r.id === selectedId) || result.runs[0] || null;
   }, [result, selectedId]);
   const best = result?.runs[0] || null;
+  const wf = result?.walk_forward || null;
+  const search = result?.search || null;
 
   const lines: BtLine[] = useMemo(() => {
     if (!result) return [];
@@ -202,7 +289,7 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
     if (result.walk_forward) {
       out.push({
         id: "wf",
-        label: `Walk-forward OOS (${result.walk_forward.folds} folds)`,
+        label: "Walk-forward (out of sample)",
         values: result.walk_forward.oos_equity.map((v) => (v == null ? Number.NaN : v)),
         color: COLORS[3],
         width: 2,
@@ -211,160 +298,230 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
     out.push({ id: "bench", label: "Buy & hold", values: result.benchmark.equity, color: "#8b949e", width: 1, dashed: true });
     return out;
   }, [result, selected, best]);
-  const wf = result?.walk_forward || null;
+
+  const hasEquity = (id: string) => !!result?.runs.find((r) => r.id === id)?.equity;
+  const pick = (id: string) => {
+    if (hasEquity(id)) setSelectedId(id);
+  };
+
+  const advancedSummary = `${RANK_LABELS[rankBy] || rankBy} · ${money(Number(cash) || 0)} · ${fees}+${slip} bps · ${
+    wfOn ? `walk-forward ${wfFolds} folds, ${wfMode}, ${wfTrain}% train` : "no walk-forward"
+  } · search budget ${budget}`;
 
   return (
     <div className="mc-layout bt-layout">
-      <div className="mc-form-col">
-        <div className="section-h">Strategy backtester</div>
-        <p className="mc-lead muted">
-          Replay a strategy over Yahoo daily closes with a parameter grid, or compare every strategy at its defaults on the
-          same symbols. Signals at the prior close, fills at the next close, costs in basis points. Indicators warm up on
-          history before the start date. In-sample research on one price path. Not financial advice.
-        </p>
-        {err && <div className="err bt-err">{err}</div>}
-        <div className="mc-grid bt-grid">
-          <label className="pf-field">
-            Preset
-            <select value={presetId} onChange={(e) => applyPreset(e.target.value)}>
-              <option value="">— choose —</option>
-              {meta?.presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field">
-            Paper fund strategy
-            <select value={fundId} onChange={(e) => applyFund(e.target.value)}>
-              <option value="">— load from a fund —</option>
-              {funds.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} · {f.strategy?.kind}
-                  {f.strategy?.symbol ? ` ${f.strategy.symbol}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field">
-            Strategy
-            <select value={strategyId} onChange={(e) => chooseStrategy(e.target.value)}>
-              {meta?.strategies.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field">
-            Rank by
-            <select value={rankBy} onChange={(e) => setRankBy(e.target.value)}>
-              {(meta?.rank_keys || ["sharpe"]).map((k) => (
-                <option key={k} value={k}>
-                  {RANK_LABELS[k] || k}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field bt-symbols">
-            Symbols (comma separated, max {meta?.limits.max_symbols ?? 12})
-            <input value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} placeholder="SPY, QQQ, IWM" />
-          </label>
-          <label className="pf-field">
-            Start
-            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-          </label>
-          <label className="pf-field">
-            End (blank = today)
-            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-          </label>
-          <label className="pf-field">
-            Initial cash
-            <input inputMode="decimal" value={cash} onChange={(e) => setCash(e.target.value)} />
-          </label>
-          <label className="pf-field">
-            Commission (bps)
-            <input inputMode="decimal" value={fees} onChange={(e) => setFees(e.target.value)} />
-          </label>
-          <label className="pf-field">
-            Slippage (bps)
-            <input inputMode="decimal" value={slip} onChange={(e) => setSlip(e.target.value)} />
-          </label>
-        </div>
+      {/* ------------------------------------------------------------ setup */}
+      <div className="mc-form-col bt-setup">
         <div className="section-h">
-          Walk-forward validation
-          <span className="muted">re-select the best combination on each training slice, then run it forward</span>
+          Strategy backtester
+          <span className="muted">Yahoo daily closes · signals at the prior close, fills at the next · not financial advice</span>
         </div>
-        <div className="mc-grid bt-grid">
-          <label className="pf-field bt-check">
-            Enabled
-            <span className="bt-check-row">
-              <input type="checkbox" checked={wfOn} onChange={(e) => setWfOn(e.target.checked)} />
-              <span className="muted">out-of-sample folds on top of the in-sample grid</span>
-            </span>
-          </label>
-          <label className="pf-field">
-            Test folds
-            <select value={wfFolds} onChange={(e) => setWfFolds(e.target.value)} disabled={!wfOn}>
-              {[2, 3, 4, 5, 6, 8].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field">
-            Initial training %
-            <select value={wfTrain} onChange={(e) => setWfTrain(e.target.value)} disabled={!wfOn}>
-              {[30, 40, 50, 60, 70].map((n) => (
-                <option key={n} value={n}>
-                  {n}%
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="pf-field">
-            Training window
-            <select value={wfMode} onChange={(e) => setWfMode(e.target.value as "anchored" | "rolling")} disabled={!wfOn}>
-              <option value="anchored">Anchored (everything before the fold)</option>
-              <option value="rolling">Rolling (same-length slice before the fold)</option>
-            </select>
-          </label>
-        </div>
-        {spec && (
-          <>
-            <div className="section-h">
-              {spec.label}
-              <span className="muted">
-                {spec.group === "per_symbol" ? "one cash sleeve per symbol" : "whole portfolio"} · {combos} combination
-                {combos === 1 ? "" : "s"}
+        {err && <div className="err bt-err">{err}</div>}
+
+        <div className="bt-stack">
+          {/* ---- 1 · Strategy */}
+          <section className="bt-card">
+            <div className="bt-card-h">
+              <span className="bt-step">1</span> Strategy
+              <span className="muted bt-card-hint">
+                {spec ? (spec.group === "per_symbol" ? "one cash sleeve per symbol" : "whole portfolio") : ""}
+                {spec && spec.params.length > 0 ? ` · ${combos} combination${combos === 1 ? "" : "s"}` : ""}
               </span>
             </div>
-            <p className="mc-lead muted">{spec.description}</p>
-            {spec.params.length > 0 && (
-              <div className="mc-grid bt-grid">
-                {spec.params.map((p) => (
-                  <label key={p.key} className="pf-field">
+            <div className="bt-grid4">
+              <label className="pf-field bt-span2">
+                <span className="bt-label">Preset</span>
+                <select value={presetId} onChange={(e) => applyPreset(e.target.value)}>
+                  <option value="">— pick a tested setup, or build your own —</option>
+                  {meta?.presets.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="pf-field">
+                <span className="bt-label">Rule</span>
+                <select value={strategyId} onChange={(e) => chooseStrategy(e.target.value)}>
+                  {meta?.strategies.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="pf-field">
+                <span className="bt-label">Paper fund</span>
+                <select value={fundId} onChange={(e) => applyFund(e.target.value)} disabled={funds.length === 0}>
+                  <option value="">{funds.length ? "— load its strategy —" : "no auto funds"}</option>
+                  {funds.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name} · {f.strategy?.kind}
+                      {f.strategy?.symbol ? ` ${f.strategy.symbol}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {spec && <p className="muted bt-desc bt-span4">{spec.description}</p>}
+              {spec?.params.map((p) => (
+                <label key={p.key} className="pf-field">
+                  <span className="bt-label">
                     {p.label}
-                    {p.help ? <span className="muted bt-help"> · {p.help}</span> : null}
-                    <input
-                      value={paramText[p.key] ?? ""}
-                      onChange={(e) => setParamText((t) => ({ ...t, [p.key]: e.target.value }))}
-                      placeholder={p.type === "symbol" ? "e.g. SHY" : "10, 20, 50"}
-                    />
-                  </label>
-                ))}
+                    {p.help ? <span className="bt-label-hint">{p.help}</span> : null}
+                  </span>
+                  <input
+                    value={paramText[p.key] ?? ""}
+                    onChange={(e) => setParamText((t) => ({ ...t, [p.key]: e.target.value }))}
+                    placeholder={p.type === "symbol" ? "e.g. SHY" : p.range ? rangeLabel(p) : "10, 20, 50"}
+                  />
+                  <span className="bt-under">{p.range ? `search ${rangeLabel(p)}` : "\u00a0"}</span>
+                </label>
+              ))}
+              {spec && spec.params.length > 0 && (
+                <p className="muted bt-desc bt-span4">
+                  Several comma-separated values make a grid. For the optimizer: one value pins a parameter, several values set
+                  its axis, a blank box uses the search range.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* ---- 2 · Data */}
+          <section className="bt-card">
+            <div className="bt-card-h">
+              <span className="bt-step">2</span> Data
+              <span className="muted bt-card-hint">Yahoo daily closes, about ten years · indicators warm up before the start date</span>
+            </div>
+            <div className="bt-grid4">
+              <label className="pf-field bt-span2">
+                <span className="bt-label">
+                  Symbols
+                  <span className="bt-label-hint">comma separated, max {meta?.limits.max_symbols ?? 12}</span>
+                </span>
+                <input value={symbolsText} onChange={(e) => setSymbolsText(e.target.value)} placeholder="SPY, QQQ, IWM" />
+              </label>
+              <label className="pf-field">
+                <span className="bt-label">Start</span>
+                <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+              </label>
+              <label className="pf-field">
+                <span className="bt-label">
+                  End
+                  <span className="bt-label-hint">blank = today</span>
+                </span>
+                <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+              </label>
+            </div>
+          </section>
+
+          {/* ---- 3 · Costs & validation */}
+          <section className="bt-card">
+            <button type="button" className="bt-card-h bt-card-toggle" onClick={() => setAdvanced((v) => !v)} aria-expanded={advanced}>
+              <span className="bt-step">3</span> Costs &amp; validation
+              <span className="muted bt-card-hint">{advanced ? "hide" : advancedSummary}</span>
+            </button>
+            {advanced && (
+              <div className="bt-grid4">
+                <label className="pf-field">
+                  <span className="bt-label">Rank by</span>
+                  <select value={rankBy} onChange={(e) => setRankBy(e.target.value)}>
+                    {(meta?.rank_keys || ["sharpe"]).map((k) => (
+                      <option key={k} value={k}>
+                        {RANK_LABELS[k] || k}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">Initial cash</span>
+                  <input inputMode="decimal" value={cash} onChange={(e) => setCash(e.target.value)} />
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">
+                    Commission <span className="bt-label-hint">bps</span>
+                  </span>
+                  <input inputMode="decimal" value={fees} onChange={(e) => setFees(e.target.value)} />
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">
+                    Slippage <span className="bt-label-hint">bps</span>
+                  </span>
+                  <input inputMode="decimal" value={slip} onChange={(e) => setSlip(e.target.value)} />
+                </label>
+
+                <label className="pf-field">
+                  <span className="bt-label">Walk-forward</span>
+                  <select value={wfOn ? "on" : "off"} onChange={(e) => setWfOn(e.target.value === "on")}>
+                    <option value="on">On: test out of sample</option>
+                    <option value="off">Off: in-sample only</option>
+                  </select>
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">Test folds</span>
+                  <select value={wfFolds} onChange={(e) => setWfFolds(e.target.value)} disabled={!wfOn}>
+                    {[2, 3, 4, 5, 6, 8].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">
+                    Training <span className="bt-label-hint">% of window</span>
+                  </span>
+                  <select value={wfTrain} onChange={(e) => setWfTrain(e.target.value)} disabled={!wfOn}>
+                    {[30, 40, 50, 60, 70].map((n) => (
+                      <option key={n} value={n}>
+                        {n}%
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="pf-field">
+                  <span className="bt-label">Training window</span>
+                  <select value={wfMode} onChange={(e) => setWfMode(e.target.value as "anchored" | "rolling")} disabled={!wfOn}>
+                    <option value="anchored">Anchored: all prior data</option>
+                    <option value="rolling">Rolling: same-length slice</option>
+                  </select>
+                </label>
+
+                <label className="pf-field">
+                  <span className="bt-label">
+                    Search budget <span className="bt-label-hint">evaluations</span>
+                  </span>
+                  <select value={budget} onChange={(e) => setBudget(e.target.value)}>
+                    {[100, 200, 400, 800].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="muted bt-desc bt-span3 bt-desc-mid">
+                  Walk-forward re-picks the best parameters on each training slice and runs them on the next slice. The search
+                  budget only applies to Optimize parameters.
+                </p>
               </div>
             )}
-          </>
-        )}
+          </section>
+        </div>
+
         <div className="bt-actions">
           <button type="button" className="llm-btn" disabled={!!busy || !meta} onClick={() => void run("grid")}>
-            {busy === "grid" ? "Running…" : `Run grid (${combos})`}
+            {busy === "grid" ? "Running…" : `Run${combos > 1 ? ` grid (${combos})` : ""}`}
+          </button>
+          <button
+            type="button"
+            className="llm-btn bt-secondary"
+            disabled={!!busy || !meta || !spec || spec.params.length === 0}
+            onClick={() => void optimize()}
+            title="Random sampling plus hill-climbing over the search ranges, with a plateau-versus-spike check"
+          >
+            {busy === "opt" ? "Searching…" : "Optimize parameters"}
           </button>
           <button type="button" className="llm-btn bt-secondary" disabled={!!busy || !meta} onClick={() => void run("all")}>
-            {busy === "all" ? "Running…" : "Compare all strategies"}
+            {busy === "all" ? "Running…" : "Compare all rules"}
           </button>
           {history.length > 0 && (
             <div className="bt-chips">
@@ -376,6 +533,7 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                   onClick={() => {
                     setResult(h.result);
                     setSelectedId(h.result.best_id);
+                    setTab("overview");
                   }}
                   title={`${h.result.start} → ${h.result.end} · ${h.result.elapsed_ms} ms`}
                 >
@@ -387,113 +545,250 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
         </div>
       </div>
 
+      {/* ------------------------------------------------------------ results */}
       <section className="mc-results bt-results">
         {!result && (
           <div className="muted mc-empty">
-            Run a grid to rank parameter combinations, or compare every strategy on the same symbols. The chart shows the
-            selected run against equal-weight buy &amp; hold.
+            Pick a preset or a rule and press Run. You get a verdict, the equity curve against buy &amp; hold, and the
+            out-of-sample walk-forward read.
           </div>
         )}
         {result && selected && (
           <>
-            <div className="section-h">
-              #{selected.rank} {selected.strategy_label} · {selected.label}
-              <span className="muted">
-                {result.symbols.join(", ")} · {result.start} → {result.end} · {result.bars} bars · ranked by{" "}
-                {RANK_LABELS[result.rank_by] || result.rank_by} · {result.elapsed_ms} ms
-              </span>
+            <div className="bt-verdict">
+              <div className="bt-verdict-title">
+                #{selected.rank} {selected.strategy_label} <span className="muted">·</span> {selected.label}
+              </div>
+              <div className="muted bt-verdict-sub">
+                {result.symbols.join(", ")} · {result.start} → {result.end} · {result.combination_count} run
+                {result.combination_count === 1 ? "" : "s"} ranked by {RANK_LABELS[result.rank_by] || result.rank_by} · {result.elapsed_ms} ms
+              </div>
+              <div className="bt-kpis">
+                <div className="bt-kpi">
+                  <div className="k">In-sample CAGR</div>
+                  <div className={`v ${tone(selected.cagr)}`}>{pct(selected.cagr, 1)}</div>
+                  <div className="sub">
+                    buy &amp; hold {pct(result.benchmark.cagr, 1)}{" "}
+                    <span className={tone(selected.excess_cagr)}>({signed(selected.excess_cagr)})</span>
+                  </div>
+                </div>
+                <div className="bt-kpi">
+                  <div className="k">Out-of-sample CAGR</div>
+                  <div className={`v ${wf ? tone(wf.oos.cagr) : "muted"}`}>{wf ? pct(wf.oos.cagr, 1) : "off"}</div>
+                  <div className="sub">
+                    {wf ? (
+                      <>
+                        buy &amp; hold {pct(wf.oos_benchmark.cagr, 1)}{" "}
+                        <span className={tone((wf.oos.cagr ?? 0) - (wf.oos_benchmark.cagr ?? 0))}>
+                          ({signed((wf.oos.cagr ?? 0) - (wf.oos_benchmark.cagr ?? 0))})
+                        </span>
+                      </>
+                    ) : (
+                      "enable walk-forward under Costs & validation"
+                    )}
+                  </div>
+                </div>
+                <div className="bt-kpi">
+                  <div className="k">Max drawdown</div>
+                  <div className="v down">{pct(selected.max_drawdown, 1)}</div>
+                  <div className="sub">buy &amp; hold {pct(result.benchmark.max_drawdown, 1)}</div>
+                </div>
+                <div className="bt-kpi">
+                  <div className="k">Sharpe</div>
+                  <div className="v">{num(selected.sharpe)}</div>
+                  <div className="sub">
+                    buy &amp; hold {num(result.benchmark.sharpe)}
+                    {wf ? ` · OOS ${num(wf.oos.sharpe)}` : ""}
+                  </div>
+                </div>
+                <div className="bt-kpi">
+                  <div className="k">Trades · win rate</div>
+                  <div className="v">
+                    {selected.trades} <span className="muted">·</span> {selected.win_rate == null ? "—" : pct(selected.win_rate, 0)}
+                  </div>
+                  <div className="sub">
+                    invested {pct(selected.exposure, 0)} of the time
+                    {selected.profit_factor != null ? ` · PF ${num(selected.profit_factor, 1)}` : ""}
+                  </div>
+                </div>
+                {wf && (
+                  <div className="bt-kpi">
+                    <div className="k">Walk-forward efficiency</div>
+                    <div className={`v ${wf.efficiency == null ? "" : wf.efficiency >= 0.5 ? "up" : "down"}`}>
+                      {wf.efficiency == null ? "—" : num(wf.efficiency)}
+                    </div>
+                    <div className="sub">
+                      beat buy &amp; hold in {wf.folds_beating_benchmark} of {wf.segments.length} folds
+                    </div>
+                  </div>
+                )}
+              </div>
+              <ul className="bt-verdict-text">
+                {verdict(result, selected).map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
             </div>
-            <div className="mc-stats bt-stats">
-              <div>
-                <div className="muted">CAGR</div>
-                <div className={tone(selected.cagr)}>{pct(selected.cagr)}</div>
+
+            <div className="bt-legend-row">
+              <div className="bt-legend">
+                {lines.map((l) => (
+                  <span key={l.id} style={{ color: l.color }}>
+                    {l.dashed ? "┄ " : "— "}
+                    {l.label}
+                  </span>
+                ))}
               </div>
-              <div>
-                <div className="muted">Total return</div>
-                <div className={tone(selected.total_return)}>{pct(selected.total_return)}</div>
-              </div>
-              <div>
-                <div className="muted">vs buy &amp; hold CAGR</div>
-                <div className={tone(selected.excess_cagr)}>
-                  {selected.excess_cagr > 0 ? "+" : ""}
-                  {pct(selected.excess_cagr)}
-                </div>
-              </div>
-              <div>
-                <div className="muted">Sharpe / Sortino</div>
-                <div>
-                  {num(selected.sharpe)} / {num(selected.sortino)}
-                </div>
-              </div>
-              <div>
-                <div className="muted">Max drawdown</div>
-                <div className="down">{pct(selected.max_drawdown)}</div>
-              </div>
-              <div>
-                <div className="muted">Calmar</div>
-                <div>{num(selected.calmar)}</div>
-              </div>
-              <div>
-                <div className="muted">Volatility</div>
-                <div>{pct(selected.volatility)}</div>
-              </div>
-              <div>
-                <div className="muted">Trades · win rate</div>
-                <div>
-                  {selected.trades} · {selected.win_rate == null ? "—" : pct(selected.win_rate, 1)}
-                </div>
-              </div>
-              <div>
-                <div className="muted">Profit factor · avg trade</div>
-                <div>
-                  {selected.profit_factor == null ? "—" : num(selected.profit_factor)} ·{" "}
-                  {selected.avg_trade_return == null ? "—" : pct(selected.avg_trade_return)}
-                </div>
-              </div>
-              <div>
-                <div className="muted">Time invested</div>
-                <div>{pct(selected.exposure, 1)}</div>
-              </div>
-              <div>
-                <div className="muted">Final value</div>
-                <div>{money(selected.final_value)}</div>
-              </div>
-              <div>
-                <div className="muted">Buy &amp; hold</div>
-                <div>
-                  {pct(result.benchmark.cagr)} CAGR · {pct(result.benchmark.max_drawdown)} DD
-                </div>
-              </div>
-            </div>
-            <div className="mc-legend bt-legend">
-              {lines.map((l) => (
-                <span key={l.id} style={{ color: l.color }}>
-                  {l.dashed ? "┄ " : "— "}
-                  {l.label}
-                </span>
-              ))}
               <label className="bt-log">
                 <input type="checkbox" checked={logScale} onChange={(e) => setLogScale(e.target.checked)} /> log scale
               </label>
             </div>
             <BacktestChart dates={result.dates} lines={lines} logScale={logScale} />
-            {result.warnings.length > 0 && (
-              <ul className="bt-warnings muted">
-                {result.warnings.map((w) => (
-                  <li key={w}>{w}</li>
+
+            <nav className="bt-tabs" aria-label="Result sections">
+              {(
+                [
+                  ["overview", "Overview"],
+                  ["ranking", `Ranking (${result.combination_count})`],
+                  wf ? ["walkforward", `Walk-forward (${wf.segments.length} folds)`] : null,
+                  search ? ["search", `Search (${search.evaluations})`] : null,
+                  selected.recent_trades?.length ? ["trades", "Last trades"] : null,
+                  ["notes", `Notes (${result.warnings.length})`],
+                ] as ([ResultTab, string] | null)[]
+              )
+                .filter((t): t is [ResultTab, string] => t != null)
+                .map(([id, label]) => (
+                  <button key={id} type="button" className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+                    {label}
+                  </button>
                 ))}
-              </ul>
+            </nav>
+
+            {tab === "overview" && (
+              <div className="bt-tabpane">
+                <div className="mc-stats bt-stats">
+                  <div>
+                    <div className="muted">Total return</div>
+                    <div className={tone(selected.total_return)}>{pct(selected.total_return)}</div>
+                  </div>
+                  <div>
+                    <div className="muted">Final value</div>
+                    <div>{money(selected.final_value)}</div>
+                  </div>
+                  <div>
+                    <div className="muted">Volatility</div>
+                    <div>{pct(selected.volatility)}</div>
+                  </div>
+                  <div>
+                    <div className="muted">Sortino · Calmar</div>
+                    <div>
+                      {num(selected.sortino)} · {num(selected.calmar)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Avg trade · best · worst</div>
+                    <div>
+                      {pct(selected.avg_trade_return)} · <span className="up">{pct(selected.best_trade, 1)}</span> ·{" "}
+                      <span className="down">{pct(selected.worst_trade, 1)}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Costs</div>
+                    <div>
+                      {result.fees_bps} bps commission · {result.slippage_bps} bps slippage
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Data</div>
+                    <div>
+                      {Object.entries(result.sources)
+                        .map(([s, src]) => `${s} ${src}`)
+                        .join(", ")}{" "}
+                      · from {result.data_start}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="muted">Bars</div>
+                    <div>
+                      {result.bars} · {selected.years} years
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
 
-            {wf && (
-              <>
-                <div className="section-h">
-                  Walk-forward · out of sample
-                  <span className="muted">
-                    {wf.mode} · {wf.folds} folds · train {wf.train_pct}% ({wf.train_bars} bars) · OOS {wf.oos_start} → {wf.oos_end} ·
-                    selected by {RANK_LABELS[wf.rank_by] || wf.rank_by}
-                  </span>
+            {tab === "ranking" && (
+              <div className="bt-tabpane">
+                <p className="muted bt-desc">In-sample. Click a row to chart it; the top {result.equity_runs} keep an equity curve.</p>
+                <div className="bt-table-wrap">
+                  <table className="pf-table bt-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Rule</th>
+                        <th>Parameters</th>
+                        <th>CAGR</th>
+                        <th>Total</th>
+                        <th>Sharpe</th>
+                        <th>Sortino</th>
+                        <th>Max DD</th>
+                        <th>Calmar</th>
+                        <th>Trades</th>
+                        <th>Win</th>
+                        <th>PF</th>
+                        <th>Invested</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.runs.map((r) => (
+                        <tr
+                          key={r.id}
+                          className={`bt-row${r.id === selected.id ? " on" : ""}${r.equity ? "" : " bt-row-noeq"}`}
+                          onClick={() => pick(r.id)}
+                        >
+                          <td>{r.rank}</td>
+                          <td>{r.strategy_label}</td>
+                          <td className="bt-params-cell">{r.label}</td>
+                          <td className={tone(r.cagr)}>{pct(r.cagr)}</td>
+                          <td className={tone(r.total_return)}>{pct(r.total_return, 1)}</td>
+                          <td>{num(r.sharpe)}</td>
+                          <td>{num(r.sortino)}</td>
+                          <td className="down">{pct(r.max_drawdown, 1)}</td>
+                          <td>{num(r.calmar)}</td>
+                          <td>{r.trades}</td>
+                          <td>{r.win_rate == null ? "—" : pct(r.win_rate, 0)}</td>
+                          <td>{r.profit_factor == null ? "—" : num(r.profit_factor, 1)}</td>
+                          <td>{pct(r.exposure, 0)}</td>
+                        </tr>
+                      ))}
+                      <tr className="bt-row bt-bench">
+                        <td>—</td>
+                        <td>Benchmark</td>
+                        <td className="bt-params-cell">{result.benchmark.label}</td>
+                        <td className={tone(result.benchmark.cagr)}>{pct(result.benchmark.cagr)}</td>
+                        <td className={tone(result.benchmark.total_return)}>{pct(result.benchmark.total_return, 1)}</td>
+                        <td>{num(result.benchmark.sharpe)}</td>
+                        <td>{num(result.benchmark.sortino)}</td>
+                        <td className="down">{pct(result.benchmark.max_drawdown, 1)}</td>
+                        <td>{num(result.benchmark.calmar)}</td>
+                        <td>0</td>
+                        <td>—</td>
+                        <td>—</td>
+                        <td>100%</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
+              </div>
+            )}
+
+            {tab === "walkforward" && wf && (
+              <div className="bt-tabpane">
+                <p className="muted bt-desc">
+                  {wf.mode} window · {wf.folds} folds · first {wf.train_pct}% ({wf.train_bars} bars) trains only · out of sample{" "}
+                  {wf.oos_start} → {wf.oos_end} · selected by {RANK_LABELS[wf.rank_by] || wf.rank_by}. Each fold's parameters were
+                  chosen on data before it, so the orange curve never sees its own test period.
+                </p>
                 <div className="mc-stats bt-stats">
                   <div>
                     <div className="muted">OOS CAGR · buy &amp; hold</div>
@@ -514,16 +809,10 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                     </div>
                   </div>
                   <div>
-                    <div className="muted">Walk-forward efficiency</div>
+                    <div className="muted">Efficiency</div>
                     <div className={wf.efficiency == null ? "" : wf.efficiency >= 0.5 ? "up" : "down"}>
                       {wf.efficiency == null ? "—" : num(wf.efficiency)}
-                      <span className="muted bt-sub"> OOS CAGR ÷ avg in-sample CAGR {pct(wf.avg_is_cagr)}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="muted">Folds beating buy &amp; hold</div>
-                    <div>
-                      {wf.folds_beating_benchmark} / {wf.segments.length}
+                      <span className="muted bt-sub">OOS CAGR ÷ avg in-sample CAGR {pct(wf.avg_is_cagr)}</span>
                     </div>
                   </div>
                   <div>
@@ -534,21 +823,13 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                   </div>
                   {wf.is_best_full && (
                     <div>
-                      <div className="muted">In-sample #1 on the same OOS span</div>
+                      <div className="muted">In-sample #1 on the same span</div>
                       <div>
                         <span className={tone(wf.is_best_full.cagr)}>{pct(wf.is_best_full.cagr)}</span> CAGR ·{" "}
                         {num(wf.is_best_full.sharpe)} Sharpe
-                        <span className="muted bt-sub"> {wf.is_best_full.label}</span>
                       </div>
                     </div>
                   )}
-                  <div>
-                    <div className="muted">OOS total return · final</div>
-                    <div>
-                      <span className={tone(wf.oos.total_return)}>{pct(wf.oos.total_return)}</span> ·{" "}
-                      {money(wf.oos.final_value)}
-                    </div>
-                  </div>
                 </div>
                 <div className="bt-table-wrap">
                   <table className="pf-table bt-table">
@@ -571,8 +852,8 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                       {wf.segments.map((sg) => (
                         <tr
                           key={sg.fold}
-                          className={`bt-row${result.runs.find((r) => r.id === sg.chosen_id)?.equity ? "" : " bt-row-noeq"}`}
-                          onClick={() => result.runs.find((r) => r.id === sg.chosen_id)?.equity && setSelectedId(sg.chosen_id)}
+                          className={`bt-row${hasEquity(sg.chosen_id) ? "" : " bt-row-noeq"}`}
+                          onClick={() => pick(sg.chosen_id)}
                           title="Chart the selected combination's full in-sample path"
                         >
                           <td>{sg.fold}</td>
@@ -597,89 +878,115 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                     </tbody>
                   </table>
                 </div>
-                <p className="muted bt-foot">
-                  Each fold's combination is the best on data before it, so the orange curve never sees its own test
-                  period. Test segments come from each combination's continuous path: positions carry across a boundary
-                  and switching parameter sets at a boundary is assumed cost-free. Efficiency below 0.5 means most of
-                  the in-sample edge did not survive.
+                <p className="muted bt-desc">
+                  Test segments come from each combination's continuous path: positions carry across a boundary and switching
+                  parameter sets at a boundary is assumed cost-free.
                 </p>
-              </>
+              </div>
             )}
 
-            <div className="section-h">
-              Ranking
-              <span className="muted">
-                {result.combination_count} runs · in-sample · click a row to chart it (top {result.equity_runs} keep an
-                equity curve)
-              </span>
-            </div>
-            <div className="bt-table-wrap">
-              <table className="pf-table bt-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Strategy</th>
-                    <th>Parameters</th>
-                    <th>CAGR</th>
-                    <th>Total</th>
-                    <th>Sharpe</th>
-                    <th>Sortino</th>
-                    <th>Max DD</th>
-                    <th>Calmar</th>
-                    <th>Trades</th>
-                    <th>Win</th>
-                    <th>PF</th>
-                    <th>Invested</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.runs.map((r) => (
-                    <tr
-                      key={r.id}
-                      className={`bt-row${r.id === selected.id ? " on" : ""}${r.equity ? "" : " bt-row-noeq"}`}
-                      onClick={() => r.equity && setSelectedId(r.id)}
-                      title={r.equity ? "Chart this run" : "Outside the top runs; no equity curve kept"}
-                    >
-                      <td>{r.rank}</td>
-                      <td>{r.strategy_label}</td>
-                      <td className="bt-params-cell">{r.label}</td>
-                      <td className={tone(r.cagr)}>{pct(r.cagr)}</td>
-                      <td className={tone(r.total_return)}>{pct(r.total_return, 1)}</td>
-                      <td>{num(r.sharpe)}</td>
-                      <td>{num(r.sortino)}</td>
-                      <td className="down">{pct(r.max_drawdown, 1)}</td>
-                      <td>{num(r.calmar)}</td>
-                      <td>{r.trades}</td>
-                      <td>{r.win_rate == null ? "—" : pct(r.win_rate, 0)}</td>
-                      <td>{r.profit_factor == null ? "—" : num(r.profit_factor, 1)}</td>
-                      <td>{pct(r.exposure, 0)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bt-row bt-bench">
-                    <td>—</td>
-                    <td>Benchmark</td>
-                    <td className="bt-params-cell">{result.benchmark.label}</td>
-                    <td className={tone(result.benchmark.cagr)}>{pct(result.benchmark.cagr)}</td>
-                    <td className={tone(result.benchmark.total_return)}>{pct(result.benchmark.total_return, 1)}</td>
-                    <td>{num(result.benchmark.sharpe)}</td>
-                    <td>{num(result.benchmark.sortino)}</td>
-                    <td className="down">{pct(result.benchmark.max_drawdown, 1)}</td>
-                    <td>{num(result.benchmark.calmar)}</td>
-                    <td>0</td>
-                    <td>—</td>
-                    <td>—</td>
-                    <td>100%</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            {selected.recent_trades && selected.recent_trades.length > 0 && (
-              <>
-                <div className="section-h">
-                  Last trades · #{selected.rank}
-                  <span className="muted">most recent {selected.recent_trades.length} closed trades</span>
+            {tab === "search" && search && (
+              <div className="bt-tabpane">
+                <p className="muted bt-desc">
+                  {search.exhaustive ? "Exhaustive" : "Random sample + hill-climb"} · {search.evaluations} of{" "}
+                  {search.grid_size.toLocaleString()} combinations · objective {RANK_LABELS[search.objective] || search.objective}
+                  {Object.entries(search.fixed).filter(([, v]) => v !== "" && v != null).length
+                    ? ` · pinned ${Object.entries(search.fixed)
+                        .filter(([, v]) => v !== "" && v != null)
+                        .map(([k, v]) => `${k}=${String(v)}`)
+                        .join(" ")}`
+                    : ""}
+                  . A winner whose neighbours score about as well sits on a plateau; one whose neighbours collapse is a spike, the
+                  usual signature of over-fitting.
+                </p>
+                <div className="bt-table-wrap">
+                  <table className="pf-table bt-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Parameters</th>
+                        <th>{RANK_LABELS[search.objective] || search.objective}</th>
+                        <th>Neighbours</th>
+                        <th>Verdict</th>
+                        <th>CAGR</th>
+                        <th>Max DD</th>
+                        <th>Trades</th>
+                        <th>Win</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {search.top.map((t, i) => (
+                        <tr
+                          key={t.id}
+                          className={`bt-row${t.id === selected.id ? " on" : ""}${hasEquity(t.id) ? "" : " bt-row-noeq"}`}
+                          onClick={() => pick(t.id)}
+                        >
+                          <td>{i + 1}</td>
+                          <td className="bt-params-cell">{t.label}</td>
+                          <td>{num(t.objective)}</td>
+                          <td>
+                            {t.neighbours_mean == null ? "—" : num(t.neighbours_mean)}{" "}
+                            <span className="muted">({t.neighbours})</span>
+                          </td>
+                          <td className={t.stable ? "up" : "down"}>{t.stable ? "plateau" : "spike"}</td>
+                          <td className={tone(t.cagr)}>{pct(t.cagr)}</td>
+                          <td className="down">{pct(t.max_drawdown, 1)}</td>
+                          <td>{t.trades ?? "—"}</td>
+                          <td>{t.win_rate == null ? "—" : pct(t.win_rate, 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
+                {search.sensitivity.length > 0 && (
+                  <>
+                    <div className="bt-sub-h">
+                      Sensitivity around the winner
+                      <span className="muted">one parameter moves, the others stay at their best values · taller is better</span>
+                    </div>
+                    <div className="bt-sens">
+                      {search.sensitivity.map((ax) => {
+                        const vals = ax.points.map((p) => p.objective).filter((v): v is number => v != null);
+                        const lo = vals.length ? Math.min(...vals) : 0;
+                        const hi = vals.length ? Math.max(...vals) : 1;
+                        return (
+                          <div key={ax.key} className="bt-sens-axis">
+                            <div className="bt-sens-h">
+                              {ax.label} <span className="muted">best {ax.best}</span>
+                            </div>
+                            <div className="bt-sens-bars">
+                              {ax.points.map((p) => {
+                                const h = p.objective == null ? 0 : hi > lo ? ((p.objective - lo) / (hi - lo)) * 100 : 60;
+                                const isBest = p.value === ax.best;
+                                const clickable = !!p.id && hasEquity(p.id);
+                                return (
+                                  <div
+                                    key={String(p.value)}
+                                    className={`bt-sens-col${isBest ? " on" : ""}${clickable ? " clickable" : ""}`}
+                                    title={`${ax.label} ${p.value}: ${p.objective == null ? "invalid" : num(p.objective)}${p.cagr != null ? ` · CAGR ${pct(p.cagr)}` : ""}${p.max_drawdown != null ? ` · DD ${pct(p.max_drawdown, 1)}` : ""}`}
+                                    onClick={() => clickable && p.id && setSelectedId(p.id)}
+                                  >
+                                    <div className="bt-sens-bar" style={{ height: `${Math.max(4, h)}%` }} />
+                                    <div className="bt-sens-v">{p.objective == null ? "×" : num(p.objective, 2)}</div>
+                                    <div className="bt-sens-x">{p.value}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {tab === "trades" && selected.recent_trades && (
+              <div className="bt-tabpane">
+                <p className="muted bt-desc">
+                  Most recent {selected.recent_trades.length} closed trades of #{selected.rank}. Click a symbol to open it in Research.
+                </p>
                 <div className="bt-table-wrap">
                   <table className="pf-table bt-table">
                     <thead>
@@ -712,25 +1019,26 @@ export default function BacktestPanel({ onOpenSymbol }: { onOpenSymbol?: (symbol
                     </tbody>
                   </table>
                 </div>
-              </>
+              </div>
             )}
 
-            <p className="muted bt-foot">
-              {money(result.initial_cash)} start · {result.fees_bps} bps commission · {result.slippage_bps} bps slippage ·
-              data {Object.entries(result.sources).map(([s, src]) => `${s} ${src}`).join(", ")} · history from{" "}
-              {result.data_start} ·{" "}
-              <button type="button" className="bt-link" onClick={() => setShowAssumptions((v) => !v)}>
-                {showAssumptions ? "hide assumptions" : "show assumptions"}
-              </button>
-            </p>
-            {showAssumptions && (
-              <ul className="bt-warnings muted">
-                {Object.entries(result.assumptions).map(([k, v]) => (
-                  <li key={k}>
-                    <b>{k}</b>: {v}
-                  </li>
-                ))}
-              </ul>
+            {tab === "notes" && (
+              <div className="bt-tabpane">
+                <div className="bt-sub-h">Warnings</div>
+                <ul className="bt-warnings muted">
+                  {result.warnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+                <div className="bt-sub-h">Assumptions</div>
+                <ul className="bt-warnings muted">
+                  {Object.entries(result.assumptions).map(([k, v]) => (
+                    <li key={k}>
+                      <b>{k.replace(/_/g, " ")}</b>: {v}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </>
         )}
